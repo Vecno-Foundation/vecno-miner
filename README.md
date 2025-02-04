@@ -39,7 +39,7 @@ To start mining, you need to run [vecno](https://github.com/Vecno-Foundation/vec
 Help:
 ```
 vecno-miner 
-A Vecno high performance CPU miner
+A Vecno high performance CPU/GPU miner
 
 USAGE:
     vecno-miner [OPTIONS] --mining-address <MINING_ADDRESS>
