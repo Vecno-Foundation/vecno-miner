@@ -1,13 +1,6 @@
 # Vecno-miner
 
 ## Installation
-### From Sources
-Installing via `cargo install` is not supported for the latest version.
-
-The regular version is still available at
-```sh
-cargo install vecno-miner
-```
 
 ### From Git Sources
 
