@@ -55,11 +55,12 @@ OPTIONS:
         --cuda-power-limits <CUDA_POWER_LIMITS>            Lock power limits eg: ,150, [default: 0]
         --cuda-workload <CUDA_WORKLOAD>                    Ratio of nonces to GPU possible parrallel run [default: 64]
         --cuda-workload-absolute                           The values given by workload are not ratio, but absolute number of nonces [default: false]
+	--cuda-nonce-gen <NONCE_GEN>                       The random method used to generate nonces. Options: (i) xoshiro (ii) lean [default: lean]
     -d, --debug                                            Enable debug logging level
         --experimental-amd                                 Uses SMID instructions in AMD. Miner will crash if instruction is not supported
     -h, --help                                             Print help information
         --mine-when-not-synced                             Mine even when vecno says it is not synced
-        --nonce-gen <NONCE_GEN>                            The random method used to generate nonces. Options: (i) xoshiro (ii) lean [default: lean]
+        --opencl-nonce-gen <NONCE_GEN>                     The random method used to generate nonces. Options: (i) xoshiro (ii) lean [default: lean]
         --opencl-amd-disable                               Disables AMD mining (does not override opencl-enable)
         --opencl-device <OPENCL_DEVICE>                    Which OpenCL GPUs to use on a specific platform
         --opencl-enable                                    Enable opencl, and take all devices of the chosen platform
