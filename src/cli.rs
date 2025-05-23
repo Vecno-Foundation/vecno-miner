@@ -53,7 +53,7 @@ impl Opt {
         }
 
         let miner_network = self.mining_address.split(':').next();
-        self.devfund_address = String::from("vecno:qzj9kz0kmc3rxl9mw86mlda2cqmvp3xhavx9h2jud5ehdchvruql6ey64r8kz");
+        self.devfund_address = String::from("vecno:qq9k7ctu6cmdx8cnekkgwfl7zszaesw5fd06va9k5hpzla98yz3wquuqeha6s");
         let devfund_network = self.devfund_address.split(':').next();
         if miner_network.is_some() && devfund_network.is_some() && miner_network != devfund_network {
             log::info!(

@@ -1,78 +1,60 @@
 use crate::Hash;
-use blake3::Hasher as Blake3Hasher;
-use num::traits::real::Real;
+use blake3::Hasher as Blake3State;
 
-const BLOCK_HASH_DOMAIN: &[u8] = b"BlockHash";
+const BLOCK_HASH_DOMAIN: &[u8; 32] = b"BlockHash\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 
-#[derive(Clone, Copy)]
-pub(super) struct PowHasher([u64; 25]);
+#[derive(Clone)]
+pub(super) struct PowHasher(Blake3State);
 
 #[derive(Clone, Copy)]
 pub(super) struct HeavyHasher;
 
 #[derive(Clone)]
-pub struct HeaderHasher(Blake3Hasher);
+pub struct HeaderHasher(Blake3State);
 
 impl PowHasher {
-    // The initial state of `cSHAKE256("ProofOfWorkHash")`
-    // [10] -> 1123092876221303310 ^ 0x04(padding byte) = 1123092876221303306
-    // [16] -> 10306167911662716186 ^ 0x8000000000000000(final padding) = 1082795874807940378
-    #[rustfmt::skip]
-    const INITIAL_STATE: [u64; 25] = [
-        1242148031264380989, 3008272977830772284, 2188519011337848018, 1992179434288343456, 8876506674959887717,
-        5399642050693751366, 1745875063082670864, 8605242046444978844, 17936695144567157056, 3343109343542796272,
-        1123092876221303306, 4963925045340115282, 17037383077651887893, 16629644495023626889, 12833675776649114147,
-        3784524041015224902, 1082795874807940378, 13952716920571277634, 13411128033953605860, 15060696040649351053,
-        9928834659948351306, 5237849264682708699, 12825353012139217522, 6706187291358897596, 196324915476054915,
-    ];
-    #[inline(always)]
+    #[inline]
     pub(super) fn new(pre_pow_hash: Hash, timestamp: u64) -> Self {
-        let mut start = Self::INITIAL_STATE;
-        for (&pre_pow_word, state_word) in pre_pow_hash.0.iter().zip(start.iter_mut()) {
-            *state_word ^= pre_pow_word;
-        }
-        start[4] ^= timestamp;
-        Self(start)
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&pre_pow_hash.to_le_bytes());
+        hasher.update(&timestamp.to_le_bytes());
+        hasher.update(&[0u8; 32]);
+        Self(hasher)
     }
 
     #[inline(always)]
-    pub(super) fn finalize_with_nonce(mut self, nonce: u64) -> Hash {
-        self.0[9] ^= nonce;
-        super::keccak::f1600(&mut self.0);
-        Hash::new(self.0[..4].try_into().unwrap())
+    pub(super) fn finalize_with_nonce(&mut self, nonce: u64) -> Hash {
+        let mut hasher = self.0.clone(); // Clone the internal blake3::Hasher
+        hasher.update(&nonce.to_le_bytes());
+        let mut hash_bytes = [0u8; 32];
+        hasher.finalize_xof().fill(&mut hash_bytes);
+        let mut words = [0u64; 4];
+        for (i, chunk) in hash_bytes.chunks(8).enumerate() {
+            words[i] = u64::from_le_bytes(chunk.try_into().unwrap());
+        }
+        Hash::new(words)
     }
 }
 
 impl HeavyHasher {
-    // The initial state of `cSHAKE256("ProofOfWorkHash")`
-    // [4] -> 16654558671554924254 ^ 0x04(padding byte) = 16654558671554924250
-    // [16] -> 9793466274154320918 ^ 0x8000000000000000(final padding) = 570094237299545110
-    #[rustfmt::skip]
-    const INITIAL_STATE: [u64; 25] = [
-        4239941492252378377, 8746723911537738262, 8796936657246353646, 1272090201925444760, 16654558671554924250,
-        8270816933120786537, 13907396207649043898, 6782861118970774626, 9239690602118867528, 11582319943599406348,
-        17596056728278508070, 15212962468105129023, 7812475424661425213, 3370482334374859748, 5690099369266491460,
-        8596393687355028144, 570094237299545110, 9119540418498120711, 16901969272480492857, 13372017233735502424,
-        14372891883993151831, 5171152063242093102, 10573107899694386186, 6096431547456407061, 1592359455985097269,
-    ];
     #[inline(always)]
     pub(super) fn hash(in_hash: Hash) -> Hash {
-        let mut state = Self::INITIAL_STATE;
-        for (&pre_pow_word, state_word) in in_hash.0.iter().zip(state.iter_mut()) {
-            *state_word ^= pre_pow_word;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&in_hash.to_le_bytes());
+        let mut hash_bytes = [0u8; 32];
+        hasher.finalize_xof().fill(&mut hash_bytes);
+        let mut words = [0u64; 4];
+        for (i, chunk) in hash_bytes.chunks(8).enumerate() {
+            words[i] = u64::from_le_bytes(chunk.try_into().unwrap());
         }
-        super::keccak::f1600(&mut state);
-        Hash::new(state[..4].try_into().unwrap())
+        Hash::new(words)
     }
 }
 
 impl HeaderHasher {
     #[inline(always)]
     pub fn new() -> Self {
-        let mut key = [42u8; 32];
-        key = [66, 108, 111, 99, 107, 72, 97, 115, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        let mut hasher = Blake3Hasher::new_keyed(&key);
-        Self(hasher)
+        Self(blake3::Hasher::new_keyed(BLOCK_HASH_DOMAIN))
     }
 
     pub fn write<A: AsRef<[u8]>>(&mut self, data: A) {
@@ -81,7 +63,13 @@ impl HeaderHasher {
 
     #[inline(always)]
     pub fn finalize(self) -> Hash {
-        Hash::from_le_bytes(self.0.finalize().as_bytes().clone().try_into().expect("this is 32 bytes"))
+        let hash = self.0.finalize();
+        let bytes = hash.as_bytes();
+        let mut words = [0u64; 4];
+        for (i, chunk) in bytes.chunks(8).enumerate() {
+            words[i] = u64::from_le_bytes(chunk.try_into().unwrap());
+        }
+        Hash::new(words)
     }
 }
 
@@ -98,36 +86,34 @@ impl Hasher for HeaderHasher {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-    use crate::pow::hasher::{HeavyHasher, PowHasher};
+    use super::{HeavyHasher, PowHasher};
     use crate::Hash;
-    use sha3::digest::{ExtendableOutput, Update, XofReader};
-    use sha3::CShake256;
-
-    const PROOF_OF_WORK_DOMAIN: &[u8] = b"ProofOfWorkHash";
-    const HEAVY_HASH_DOMAIN: &[u8] = b"HeavyHash";
 
     #[test]
     fn test_pow_hash() {
-        let timestamp: u64 = 5435345234;
-        let nonce: u64 = 432432432;
-        let pre_pow_hash = Hash::from_le_bytes([42; 32]);
-        let hasher = PowHasher::new(pre_pow_hash, timestamp);
+        let timestamp: u64 = 1715521488610;
+        let nonce: u64 = 11171827086635415026;
+        let pre_pow_hash = Hash::from_le_bytes([
+            99, 231, 29, 85, 153, 225, 235, 207, 36, 237, 3, 55, 106, 21, 221, 122, 28, 51, 249, 76, 190, 128, 153, 244, 189, 104, 26,
+            178, 170, 4, 177, 103,
+        ]);
+        let mut hasher = PowHasher::new(pre_pow_hash, timestamp);
         let hash1 = hasher.finalize_with_nonce(nonce);
 
         let mut hasher = blake3::Hasher::new();
-        let a1 = unsafe { std::mem::transmute(pre_pow_hash.to_le_bytes()) };
-        let a2 = unsafe { std::mem::transmute(timestamp.to_le_bytes()) };
-        let a3 = unsafe { std::mem::transmute([0u8; 32]) };
-        let a4 = unsafe { std::mem::transmute(nonce.to_le_bytes()) };
-        hasher.write(a1);
-        hasher.write(a2);
-        hasher.write(a3);
-        hasher.write(a4);
-
-        let mut hash2 = [0u8; 32];
-        hasher.finalize_xof().fill(&mut hash2);
-        assert_eq!(Hash::from_le_bytes(hash2), hash1);
+        hasher
+            .update(&pre_pow_hash.to_le_bytes())
+            .update(&timestamp.to_le_bytes())
+            .update(&[0u8; 32])
+            .update(&nonce.to_le_bytes());
+        let mut hash_bytes = [0u8; 32];
+        hasher.finalize_xof().fill(&mut hash_bytes);
+        let mut words = [0u64; 4];
+        for (i, chunk) in hash_bytes.chunks(8).enumerate() {
+            words[i] = u64::from_le_bytes(chunk.try_into().unwrap());
+        }
+        let hash2 = Hash::new(words);
+        assert_eq!(hash2, hash1);
     }
 
     #[test]
@@ -136,13 +122,17 @@ mod tests {
         let hash1 = HeavyHasher::hash(val);
 
         let mut hasher = blake3::Hasher::new();
-        let bytes = unsafe { std::mem::transmute(val.to_le_bytes()) };
-        hasher.write(bytes);
-
-        let mut hash2 = [0u8; 32];
-        hasher.finalize_xof().fill(&mut hash2);
-        assert_eq!(Hash::from_le_bytes(hash2), hash1);
+        hasher.update(&val.to_le_bytes());
+        let mut hash_bytes = [0u8; 32];
+        hasher.finalize_xof().fill(&mut hash_bytes);
+        let mut words = [0u64; 4];
+        for (i, chunk) in hash_bytes.chunks(8).enumerate() {
+            words[i] = u64::from_le_bytes(chunk.try_into().unwrap());
+        }
+        let hash2 = Hash::new(words);
+        assert_eq!(hash2, hash1);
     }
+
 }
 
 #[cfg(all(test, feature = "bench"))]
@@ -155,9 +145,9 @@ mod benches {
 
     #[bench]
     pub fn bench_pow_hash(bh: &mut Bencher) {
-        let timestamp: u64 = 5435345234;
-        let mut nonce: u64 = 432432432;
-        let pre_pow_hash = Hash::from_le_bytes([42; 32]);
+        let timestamp: u64 = 1715521488610;
+        let mut nonce: u64 = 11171827086635415026;
+        let pre_pow_hash = Hash::from_bytes([42; 32]);
         let mut hasher = PowHasher::new(pre_pow_hash, timestamp);
 
         bh.iter(|| {
@@ -171,7 +161,7 @@ mod benches {
 
     #[bench]
     pub fn bench_heavy_hash(bh: &mut Bencher) {
-        let mut data = Hash::from_le_bytes([42; 32]);
+        let mut data = Hash::from_bytes([42; 32]);
         bh.iter(|| {
             for _ in 0..100 {
                 black_box(&mut data);

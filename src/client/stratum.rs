@@ -188,7 +188,7 @@ impl StratumHandler {
         let (send_channel, recv) = mpsc::channel::<StratumLine>(3);
         let (sink, stream) = client.split();
         tokio::spawn(async move { ReceiverStream::new(recv).map(Ok).forward(sink).await });
-
+        #[allow(static_mut_refs)]
         let share_state = unsafe {
             if SHARE_STATS.is_none() {
                 SHARE_STATS = Some(Arc::new(ShareStats::default()));

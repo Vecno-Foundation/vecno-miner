@@ -1,5 +1,7 @@
 # Vecno-miner
 
+This miner supports Nvidia and AMD GPU's, a long with mining with your CPU.
+
 ## Installation
 
 ### From Git Sources
@@ -12,24 +14,30 @@ git clone git@github.com:vecno-foundation/vecno-miner.git
 cd vecno-miner
 cargo build --release -p vecno-miner -p vecnocuda -p vecnoopencl
 ```
+
 And, the miner (and plugins) will be in `targets/release`. You can replace the last line with
+
 ```sh
 cargo build --release --all
 ```
 
 ### From Binaries
+
 The [release page](https://github.com/Vecno-Foundation/vecno-miner/releases) includes precompiled binaries for Linux, and Windows (for the GPU version).
 
 ### Removing Plugins
-To remove a plugin, you simply remove the corresponding `dll`/`so` for the directory of the miner. 
+
+To remove a plugin, you simply remove the corresponding `dll`/`so` for the directory of the miner.
 
 * `libvecnocuda.so`, `libvecnocuda.dll`: Cuda support for Vecno-Miner
 * `libvecnoopencl.so`, `libvecnoopencl.dll`: OpenCL support for Vecno-Miner
 
 # Usage
+
 To start mining, you need to run [vecno](https://github.com/Vecno-Foundation/vecnod) and have an address to send the rewards to.
 
 Help:
+
 ```
 vecno-miner 
 A Vecno high performance CPU/GPU miner
@@ -67,6 +75,26 @@ OPTIONS:
 
 To start mining, you just need to run the following:
 
-`./vecno-miner --mining-address vecno:XXXXX`
+`./vecno-miner --mining-address vecno:XXXXX --port 7110`
 
 This will run the miner on all the available GPU devcies.
+
+Optional: use arg `--threads ` to activate CPU mining. This uses all available CPU threads.
+
+## Support
+
+This mining software is still experimental, it has not been tested with mining pools, only with solo mining.
+
+It's currently have been tested with:
+
+AMD:
+
+> AMD Radeon RX 7700 XT
+
+NVIDIA:
+
+> NVIDIA GeForce GTX 1070
+
+CPU:
+
+> Intel® Core™ i9-12900KF

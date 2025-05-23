@@ -112,10 +112,12 @@ pub(crate) struct StratumLine {
 /// An error occurred while encoding or decoding a line.
 #[derive(Debug)]
 pub(crate) enum NewLineJsonCodecError {
+    #[allow(dead_code)]
     JsonParseError(String),
     JsonEncodeError,
     LineSplitError,
     LineEncodeError,
+    #[allow(dead_code)]
     Io(io::Error),
 }
 

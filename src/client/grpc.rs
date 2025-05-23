@@ -17,12 +17,14 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, error::SendError, Sender};
 use tokio::task::JoinHandle;
+use tokio::time::{interval, Duration};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::{PollSendError, PollSender};
 use tonic::{transport::Channel as TonicChannel, Streaming};
+use std::sync::atomic::AtomicU64;
 
 static EXTRA_DATA: &str = concat!(env!("CARGO_PKG_VERSION"), "/", env!("PACKAGE_COMPILE_TIME"));
-static VERSION_UPDATE: &str = "0.11.15";
+static VERSION_UPDATE: &str = "0.0.1";
 type BlockHandle = JoinHandle<Result<(), PollSendError<VecnodMessage>>>;
 
 #[allow(dead_code)]
@@ -35,9 +37,10 @@ pub struct VecnodHandler {
     devfund_address: Option<String>,
     devfund_percent: u16,
     block_template_ctr: Arc<AtomicU16>,
-
     block_channel: Sender<BlockSeed>,
     block_handle: BlockHandle,
+    // New field to track successful block submissions
+    successful_blocks: Arc<AtomicU64>,
 }
 
 #[async_trait(?Send)]
@@ -48,11 +51,23 @@ impl Client for VecnodHandler {
     }
 
     async fn register(&mut self) -> Result<(), Error> {
-        // We actually register in connect
         Ok(())
     }
 
     async fn listen(&mut self, miner: &mut MinerManager) -> Result<(), Error> {
+        // Start the periodic logger for successful block submissions
+        let successful_blocks = Arc::clone(&self.successful_blocks);
+        tokio::spawn(async move {
+            let mut interval = interval(Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                let count = successful_blocks.swap(0, Ordering::SeqCst);
+                if count > 0 {
+                    info!("Successfully submitted {} blocks in the past 10 seconds", count);
+                }
+            }
+        });
+
         while let Some(msg) = self.stream.message().await? {
             match msg.payload {
                 Some(payload) => self.handle_message(payload, miner).await?,
@@ -95,11 +110,11 @@ impl VecnodHandler {
                 .unwrap_or_else(|| Arc::new(AtomicU16::new((thread_rng().next_u64() % 10_000u64) as u16))),
             block_channel,
             block_handle,
+            successful_blocks: Arc::new(AtomicU64::new(0)), // Initialize the counter
         }))
     }
 
     fn create_block_channel(send_channel: Sender<VecnodMessage>) -> (Sender<BlockSeed>, BlockHandle) {
-        // VecnodMessage::submit_block(block)
         let (send, recv) = mpsc::channel::<BlockSeed>(1);
         (
             send,
@@ -147,7 +162,10 @@ impl VecnodHandler {
                 (None, true, None) => error!("No block and No Error!"),
             },
             Payload::SubmitBlockResponse(res) => match res.error {
-                None => info!("block submitted successfully!"),
+                None => {
+                    // Increment the successful block counter instead of logging
+                    self.successful_blocks.fetch_add(1, Ordering::SeqCst);
+                }
                 Some(e) => warn!("Failed submitting block: {:?}", e),
             },
             Payload::GetBlockResponse(msg) => {
@@ -165,7 +183,6 @@ impl VecnodHandler {
                     true => self.client_send(NotifyNewBlockTemplateRequestMessage {}).await?,
                     false => self.client_send(NotifyBlockAddedRequestMessage {}).await?,
                 };
-
                 self.client_get_block_template().await?;
             }
             Payload::NotifyNewBlockTemplateResponse(res) => match res.error {

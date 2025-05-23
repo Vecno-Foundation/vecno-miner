@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-
-use sync::{Arc, AtomicBool, AtomicUsize, Condvar, Mutex, Ordering, RwLock};
+use std::sync::{Arc};
+use sync::{AtomicBool, AtomicUsize, Condvar, Mutex, Ordering, RwLock};
 
 // The value is in a RWLock, all receivers observe it using a read lock + clone
 // id is used to check if there's a new value before reading the old value.
@@ -204,13 +204,9 @@ mod sync {
         thread,
     };
     #[cfg(not(feature = "shuttle"))]
-    pub use std::{
-        sync::{
+    pub use std::sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
-            Arc, Barrier,
-        },
-        thread,
-    };
+        };
 
     pub struct Mutex<T>(MutexInternal<T>);
     impl<T> Mutex<T> {
@@ -278,11 +274,9 @@ mod sync {
 
 #[cfg(test)]
 mod tests {
-    use crate::watch::{
-        self,
-        sync::{thread, Arc, Barrier},
-        ChannelClosed,
-    };
+    use crate::watch::{self, ChannelClosed};
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
     #[test]
     fn test_receiver_count() {
@@ -397,12 +391,12 @@ mod tests {
                 assert_eq!(tx.get_changed(), Ok(None));
                 assert_eq!(tx2.get_changed(), Ok(None));
                 let barrier = Arc::new(Barrier::new(3));
-                let barrier_clone = Arc::clone(&barrier);
+                let barrier_clone: Arc<Barrier> = Arc::clone(&barrier);
                 let handle1 = thread::spawn(move || {
                     barrier_clone.wait();
                     assert_eq!(tx.wait_for_change(), Ok("Two"));
                 });
-                let barrier_clone = Arc::clone(&barrier);
+                let barrier_clone: Arc<Barrier> = Arc::clone(&barrier);
                 let handle2 = thread::spawn(move || {
                     barrier_clone.wait();
                     assert_eq!(tx2.wait_for_change(), Ok("Two"));
@@ -442,12 +436,12 @@ mod tests {
                 let tx2 = tx.clone();
                 assert_eq!(tx2.shared.receiver_count(), 2);
                 let barrier = Arc::new(Barrier::new(3));
-                let barrier_clone = Arc::clone(&barrier);
+                let barrier_clone: Arc<Barrier> = Arc::clone(&barrier);
                 let handle1 = thread::spawn(move || {
                     barrier_clone.wait();
                     assert_eq!(tx.wait_for_change(), Err(ChannelClosed(())));
                 });
-                let barrier_clone = Arc::clone(&barrier);
+                let barrier_clone: Arc<Barrier> = Arc::clone(&barrier);
                 let handle2 = thread::spawn(move || {
                     barrier_clone.wait();
                     drop(rx);

@@ -108,7 +108,8 @@ pub trait WorkerSpec: Any + Send + Sync {
     fn build(&self) -> Box<dyn Worker>;
 }
 
-pub trait Worker {
+
+pub trait Worker: {
     //fn new(device_id: u32, workload: f32, is_absolute: bool) -> Result<Self, Error>;
     fn id(&self) -> String;
     fn load_block_constants(&mut self, hash_header: &[u8; 72], matrix: &[[u16; 64]; 64], target: &[u64; 4]);

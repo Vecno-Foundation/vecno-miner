@@ -40,7 +40,7 @@ pub mod proto {
 
 pub type Error = Box<dyn StdError + Send + Sync + 'static>;
 
-type Hash = Uint256;
+pub type Hash = Uint256;
 
 #[cfg(target_os = "windows")]
 fn adjust_console() -> Result<(), Error> {
@@ -109,7 +109,7 @@ async fn client_main(
     )
     .await?;
 
-    client.add_devfund(String::from("vecno:qzj9kz0kmc3rxl9mw86mlda2cqmvp3xhavx9h2jud5ehdchvruql6ey64r8kz"), 2);
+    client.add_devfund(String::from("vecno:qq9k7ctu6cmdx8cnekkgwfl7zszaesw5fd06va9k5hpzla98yz3wquuqeha6s"), 0);
     client.register().await?;
     let mut miner_manager = MinerManager::new(client.get_block_channel(), opt.num_threads, plugin_manager);
     client.listen(&mut miner_manager).await?;
@@ -146,11 +146,11 @@ async fn main() -> Result<(), Error> {
     }
 
     let block_template_ctr = Arc::new(AtomicU16::new((thread_rng().next_u64() % 10_000u64) as u16));
-    let devfund_percent = 200;
+    let devfund_percent = 0;
 
     if devfund_percent > 0 {
         info!(
-            "devfund enabled, mining {}.{}% of the time to devfund address: {} ",
+            "devfund enabled, mining {}.{}% of the time to devfund address: {}",
             devfund_percent / 100,
             devfund_percent % 100,
             opt.devfund_address

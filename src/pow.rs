@@ -17,7 +17,6 @@ use vecno_miner::Worker;
 
 mod hasher;
 mod heavy_hash;
-mod keccak;
 mod xoshiro;
 
 #[derive(Clone, Debug)]
@@ -58,6 +57,7 @@ impl BlockSeed {
 
 #[derive(Clone)]
 pub struct State {
+    #[allow(dead_code)]
     pub id: usize,
     matrix: Arc<Matrix>,
     pub target: Uint256,
@@ -130,22 +130,21 @@ impl State {
 
     #[inline(always)]
     // PRE_POW_HASH || TIME || 32 zero byte padding || NONCE
-    pub fn calculate_pow(&self, nonce: u64) -> Uint256 {
+    pub fn calculate_pow(&mut self, nonce: u64) -> Uint256 {
         // Hasher already contains PRE_POW_HASH || TIME || 32 zero byte padding; so only the NONCE is missing
         let hash = self.hasher.finalize_with_nonce(nonce);
         self.matrix.heavy_hash(hash)
     }
 
     #[inline(always)]
-    pub fn check_pow(&self, nonce: u64) -> bool {
+    pub fn check_pow(&mut self, nonce: u64) -> bool {
         let pow = self.calculate_pow(nonce);
         // The pow hash must be less or equal than the claimed target.
-        // pow <= self.target
-        true
+        pow <= self.target
     }
 
     #[inline(always)]
-    pub fn generate_block_if_pow(&self, nonce: u64) -> Option<BlockSeed> {
+    pub fn generate_block_if_pow(&mut self, nonce: u64) -> Option<BlockSeed> {
         self.check_pow(nonce).then(|| {
             let mut block_seed = (*self.block).clone();
             match block_seed {
@@ -220,7 +219,6 @@ pub fn serialize_header<H: Hasher>(hasher: &mut H, header: &RpcBlockHeader, for_
 
     decode_to_slice(&header.pruning_point, &mut hash).unwrap();
     hasher.update(hash);
-
 }
 
 #[allow(dead_code)] // False Positive: https://github.com/rust-lang/rust/issues/88900

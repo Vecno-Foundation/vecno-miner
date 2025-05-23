@@ -3,8 +3,8 @@ use crate::Error;
 use include_dir::{include_dir, Dir};
 use vecno_miner::xoshiro256starstar::Xoshiro256StarStar;
 use vecno_miner::Worker;
-use log::{info, warn};
-use opencl3::command_queue::{CommandQueue, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE};
+use log::{error, info, warn};
+use opencl3::command_queue::CommandQueue;
 use opencl3::context::Context;
 use opencl3::device::Device;
 use opencl3::event::{release_event, retain_event, wait_for_events};
@@ -20,26 +20,21 @@ use std::ptr;
 use std::sync::Arc;
 
 static BINARY_DIR: Dir = include_dir!("./plugins/opencl/resources/bin/");
-static PROGRAM_SOURCE: &str = include_str!("../resources/vecno-opencl.cl");
+static PROGRAM_SOURCE: &str = include_str!("../resources/heavy_hash.cl");
 
 pub struct OpenCLGPUWorker {
     context: Arc<Context>,
     random: NonceGenEnum,
     local_size: usize,
     workload: usize,
-
     heavy_hash: Kernel,
-
     queue: CommandQueue,
-
-    random_state: Buffer<cl_ulong>,
+    random_state: Buffer<[cl_ulong; 4]>,
     final_nonce: Buffer<cl_ulong>,
     final_hash: Buffer<[cl_ulong; 4]>,
-
     hash_header: Buffer<cl_uchar>,
     matrix: Buffer<cl_uchar>,
-    target: Buffer<cl_ulong>,
-
+    target: Buffer<[cl_ulong; 4]>,
     events: Vec<cl_event>,
     experimental_amd: bool,
 }
@@ -51,12 +46,13 @@ impl Worker for OpenCLGPUWorker {
     }
 
     fn load_block_constants(&mut self, hash_header: &[u8; 72], matrix: &[[u16; 64]; 64], target: &[u64; 4]) {
-        let cl_uchar_matrix = match self.experimental_amd {
-            true => matrix
+        let cl_uchar_matrix = if self.experimental_amd {
+            matrix
                 .iter()
                 .flat_map(|row| row.chunks(2).map(|v| ((v[0] << 4) | v[1]) as cl_uchar))
-                .collect::<Vec<cl_uchar>>(),
-            false => matrix.iter().flat_map(|row| row.map(|v| v as cl_uchar)).collect::<Vec<cl_uchar>>(),
+                .collect::<Vec<cl_uchar>>()
+        } else {
+            matrix.iter().flat_map(|row| row.map(|v| v as cl_uchar)).collect::<Vec<cl_uchar>>()
         };
         self.queue
             .enqueue_write_buffer(&mut self.final_nonce, CL_BLOCKING, 0, &[0], &[])
@@ -78,7 +74,7 @@ impl Worker for OpenCLGPUWorker {
             .unwrap();
         let copy_target = self
             .queue
-            .enqueue_write_buffer(&mut self.target, CL_BLOCKING, 0, target, &[])
+            .enqueue_write_buffer(&mut self.target, CL_BLOCKING, 0, &[*target], &[])
             .map_err(|e| e.to_string())
             .unwrap();
 
@@ -90,8 +86,9 @@ impl Worker for OpenCLGPUWorker {
 
     fn calculate_hash(&mut self, _nonces: Option<&Vec<u64>>, nonce_mask: u64, nonce_fixed: u64) {
         if self.random == NonceGenEnum::Lean {
+            let seed = [thread_rng().next_u64(), 0, 0, 0];
             self.queue
-                .enqueue_write_buffer(&mut self.random_state, CL_BLOCKING, 0, &[thread_rng().next_u64()], &[])
+                .enqueue_write_buffer(&mut self.random_state, CL_BLOCKING, 0, &[seed], &[])
                 .map_err(|e| e.to_string())
                 .unwrap()
                 .wait()
@@ -101,36 +98,46 @@ impl Worker for OpenCLGPUWorker {
             NonceGenEnum::Lean => 0,
             NonceGenEnum::Xoshiro => 1,
         };
+        let nonces_len = self.workload as u64;
         let kernel_event = ExecuteKernel::new(&self.heavy_hash)
             .set_arg(&(self.local_size as u64))
             .set_arg(&nonce_mask)
             .set_arg(&nonce_fixed)
+            .set_arg(&nonces_len)
+            .set_arg(&random_type)
             .set_arg(&self.hash_header)
             .set_arg(&self.matrix)
             .set_arg(&self.target)
-            .set_arg(&random_type)
             .set_arg(&self.random_state)
             .set_arg(&self.final_nonce)
             .set_arg(&self.final_hash)
             .set_global_work_size(self.workload)
             .set_event_wait_list(self.events.borrow())
             .enqueue_nd_range(&self.queue)
-            .map_err(|e| e.to_string())
+            .map_err(|e| {
+                error!("Kernel arg setup failed: {}", e);
+                e.to_string()
+            })
             .unwrap();
 
         kernel_event.wait().unwrap();
 
-        /*let mut nonces = [0u64; 1];
+        let mut nonces = [0u64; 1];
         let mut hash = [[0u64; 4]];
-        self.queue.enqueue_read_buffer(&self.final_nonce, CL_BLOCKING, 0, &mut nonces, &[]).map_err(|e| e.to_string()).unwrap();
-        self.queue.enqueue_read_buffer(&self.final_hash, CL_BLOCKING, 0, &mut hash, &[]).map_err(|e| e.to_string()).unwrap();
-        log::info!("Hash from kernel: {:?}", hash);*/
-        /*for event in &self.events{
+        self.queue
+            .enqueue_read_buffer(&self.final_nonce, CL_BLOCKING, 0, &mut nonces, &[])
+            .map_err(|e| e.to_string())
+            .unwrap();
+        self.queue
+            .enqueue_read_buffer(&self.final_hash, CL_BLOCKING, 0, &mut hash, &[])
+            .map_err(|e| e.to_string())
+            .unwrap();
+        for event in &self.events {
             release_event(*event).unwrap();
         }
         let event = kernel_event.get();
-        self.events = vec!(event);
-        retain_event(event);*/
+        self.events = vec![event];
+        retain_event(event).unwrap();
     }
 
     fn sync(&self) -> Result<(), Error> {
@@ -147,7 +154,7 @@ impl Worker for OpenCLGPUWorker {
 
     fn copy_output_to(&mut self, nonces: &mut Vec<u64>) -> Result<(), Error> {
         self.queue
-            .enqueue_read_buffer(&self.final_nonce, CL_BLOCKING, 0, nonces, &[])
+            .enqueue_read_buffer(&mut self.final_nonce, CL_BLOCKING, 0, nonces, &[])
             .map_err(|e| e.to_string())
             .unwrap();
         Ok(())
@@ -163,10 +170,9 @@ impl OpenCLGPUWorker {
         mut use_binary: bool,
         random: &NonceGenEnum,
     ) -> Result<Self, Error> {
-        let name =
-            device.board_name_amd().unwrap_or_else(|_| device.name().unwrap_or_else(|_| "Unknown Device".into()));
+        let name = device.board_name_amd().unwrap_or_else(|_| device.name().unwrap_or_else(|_| "Unknown Device".into()));
         info!("{}: Using OpenCL", name);
-        let version = device.version().unwrap_or_else(|_| "unkown version".into());
+        let version = device.version().unwrap_or_else(|_| "unknown version".into());
         info!(
             "{}: Device supports {} with extensions: {}",
             name,
@@ -188,10 +194,10 @@ impl OpenCLGPUWorker {
             Arc::new(Context::from_device(&device).unwrap_or_else(|_| panic!("{}::Context::from_device failed", name)));
         let context_ref = unsafe { Arc::as_ptr(&context).as_ref().unwrap() };
 
-        let options = match experimental_amd {
-            // true => "-D __FORCE_AMD_V_DOT4_U32_U8__=1 ",
-            true => "-D __FORCE_AMD_V_DOT8_U32_U4__=1 ",
-            false => "",
+        let options = if experimental_amd {
+            "-D EXPERIMENTAL_AMD"
+        } else {
+            ""
         };
 
         let experimental_amd_use = !matches!(
@@ -208,42 +214,46 @@ impl OpenCLGPUWorker {
                 info!("{}: Looking for binary for {}", name, device_name);
                 match BINARY_DIR.get_file(format!("{}_vecno-opencl.bin", device_name)) {
                     Some(binary) => {
-                        Program::create_and_build_from_binary(&context, &[binary.contents()], "").unwrap_or_else(|e|{
-                        //Program::create_and_build_from_binary(&context, &[include_bytes!("../resources/vecno-opencl-linked.bc")], "").unwrap_or_else(|e|{
-                            warn!("{}::Program::create_and_build_from_source failed: {}. Reverting to compiling from source", name, e);
+                        Program::create_and_build_from_binary(&context, &[binary.contents()], "").unwrap_or_else(|e| {
+                            warn!("Binary file not found for {}. Reverting to compiling from source: {}", device_name, e);
                             use_binary = false;
-                            from_source(&context, &device, options).unwrap_or_else(|e| panic!("{}::Program::create_and_build_from_binary failed: {}", name, e))
+                            from_source(&context, &device, options)
+                                .unwrap_or_else(|e| panic!("{}::Program::create_and_build_from_source failed: {}", name, e))
                         })
                     }
                     None => {
                         warn!("Binary file not found for {}. Reverting to compiling from source.", device_name);
                         use_binary = false;
                         from_source(&context, &device, options)
-                            .unwrap_or_else(|e| panic!("{}::Program::create_and_build_from_binary failed: {}", name, e))
+                            .unwrap_or_else(|e| panic!("{}::Program::create_and_build_from_source failed: {}", name, e))
                     }
                 }
             }
             false => from_source(&context, &device, options)
-                .unwrap_or_else(|e| panic!("{}::Program::create_and_build_from_binary failed: {}", name, e)),
+                .unwrap_or_else(|e| panic!("{}::Program::create_and_build_from_source failed: {}", name, e)),
         };
         info!("Kernels: {:?}", program.kernel_names());
         let heavy_hash =
             Kernel::create(&program, "heavy_hash").unwrap_or_else(|_| panic!("{}::Kernel::create failed", name));
 
         let queue =
-            CommandQueue::create_with_properties(&context, device.id(), CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, 0)
+            CommandQueue::create_with_properties(&context, device.id(), 0, 0)
                 .unwrap_or_else(|_| panic!("{}::CommandQueue::create_with_properties failed", name));
 
         let final_nonce = Buffer::<cl_ulong>::create(context_ref, CL_MEM_READ_WRITE, 1, ptr::null_mut())
             .expect("Buffer allocation failed");
         let final_hash = Buffer::<[cl_ulong; 4]>::create(context_ref, CL_MEM_WRITE_ONLY, 1, ptr::null_mut())
             .expect("Buffer allocation failed");
-
         let hash_header = Buffer::<cl_uchar>::create(context_ref, CL_MEM_READ_ONLY, 72, ptr::null_mut())
             .expect("Buffer allocation failed");
-        let matrix = Buffer::<cl_uchar>::create(context_ref, CL_MEM_READ_ONLY, 64 * 64, ptr::null_mut())
+        let matrix = Buffer::<cl_uchar>::create(
+            context_ref,
+            CL_MEM_READ_ONLY,
+            if experimental_amd { 64 * 64 / 2 } else { 64 * 64 },
+            ptr::null_mut(),
+        )
             .expect("Buffer allocation failed");
-        let target = Buffer::<cl_ulong>::create(context_ref, CL_MEM_READ_ONLY, 4, ptr::null_mut())
+        let target = Buffer::<[cl_ulong; 4]>::create(context_ref, CL_MEM_READ_ONLY, 1, ptr::null_mut())
             .expect("Buffer allocation failed");
 
         let mut seed = [1u64; 4];
@@ -253,7 +263,7 @@ impl OpenCLGPUWorker {
             NonceGenEnum::Xoshiro => {
                 info!("Using xoshiro for nonce-generation");
                 let random_state =
-                    Buffer::<cl_ulong>::create(context_ref, CL_MEM_READ_WRITE, 4 * chosen_workload, ptr::null_mut())
+                    Buffer::<[cl_ulong; 4]>::create(context_ref, CL_MEM_READ_WRITE, chosen_workload, ptr::null_mut())
                         .expect("Buffer allocation failed");
                 let rand_state =
                     Xoshiro256StarStar::new(&seed).iter_jump_state().take(chosen_workload).collect::<Vec<[u64; 4]>>();
@@ -279,7 +289,6 @@ impl OpenCLGPUWorker {
                 unsafe {
                     random_state_local.copy_from(rand_state.as_ptr() as *mut c_void, 32 * chosen_workload);
                 }
-                // queue.enqueue_svm_unmap(&random_state,&[]).map_err(|e| e.to_string())?;
                 queue
                     .enqueue_unmap_mem_object(random_state.get(), random_state_local, &[])
                     .map_err(|e| e.to_string())
@@ -291,10 +300,11 @@ impl OpenCLGPUWorker {
             }
             NonceGenEnum::Lean => {
                 info!("Using lean nonce-generation");
-                let mut random_state = Buffer::<cl_ulong>::create(context_ref, CL_MEM_READ_WRITE, 1, ptr::null_mut())
+                let mut random_state = Buffer::<[cl_ulong; 4]>::create(context_ref, CL_MEM_READ_WRITE, 1, ptr::null_mut())
                     .expect("Buffer allocation failed");
+                let seed = [thread_rng().next_u64(), 0, 0, 0];
                 queue
-                    .enqueue_write_buffer(&mut random_state, CL_BLOCKING, 0, &[thread_rng().next_u64()], &[])
+                    .enqueue_write_buffer(&mut random_state, CL_BLOCKING, 0, &[seed], &[])
                     .map_err(|e| e.to_string())
                     .unwrap()
                     .wait()
@@ -316,7 +326,7 @@ impl OpenCLGPUWorker {
             matrix,
             target,
             events: Vec::<cl_event>::new(),
-            experimental_amd: ((experimental_amd | use_binary) & experimental_amd_use),
+            experimental_amd: (experimental_amd | use_binary) & experimental_amd_use,
         })
     }
 }
@@ -324,45 +334,39 @@ impl OpenCLGPUWorker {
 fn from_source(context: &Context, device: &Device, options: &str) -> Result<Program, String> {
     let version = device.version()?;
     let v = version.split(' ').nth(1).unwrap();
-    let mut compile_options = options.to_string();
+    let mut compile_options = String::from(options);
+    compile_options += " ";
     compile_options += CL_MAD_ENABLE;
     compile_options += CL_FINITE_MATH_ONLY;
     if v == "2.0" || v == "2.1" || v == "3.0" {
-        info!("Compiling with OpenCl 2");
+        info!("Compiling with OpenCL 2");
         compile_options += CL_STD_2_0;
     }
     compile_options += &match Platform::new(device.platform().unwrap()).name() {
         Ok(name) => format!(
-            "-D{} ",
+            " -D{}",
             name.chars()
-                .map(|c| match c.is_ascii_alphanumeric() {
-                    true => c,
-                    false => '_',
-                })
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
                 .collect::<String>()
                 .to_uppercase()
         ),
         Err(_) => String::new(),
     };
     compile_options += &match device.compute_capability_major_nv() {
-        Ok(major) => format!("-D __COMPUTE_MAJOR__={} ", major),
+        Ok(major) => format!(" -D __COMPUTE_MAJOR__={}", major),
         Err(_) => String::new(),
     };
     compile_options += &match device.compute_capability_minor_nv() {
-        Ok(minor) => format!("-D __COMPUTE_MINOR__={} ", minor),
+        Ok(minor) => format!(" -D __COMPUTE_MINOR__={}", minor),
         Err(_) => String::new(),
     };
-
-    // Hack to recreate the AMD flags
     compile_options += &match device.pcie_id_amd() {
         Ok(_) => {
             let device_name = device.name().unwrap_or_else(|_| "Unknown".into()).to_lowercase();
-            format!("-D OPENCL_PLATFORM_AMD -D __{}__ ", device_name)
+            format!(" -D OPENCL_PLATFORM_AMD -D __{}__", device_name)
         }
         Err(_) => String::new(),
     };
-
     info!("Build OpenCL with {}", compile_options);
-
-    Program::create_and_build_from_source(context, PROGRAM_SOURCE, compile_options.as_str())
+    Program::create_and_build_from_source(context, PROGRAM_SOURCE, &compile_options)
 }
