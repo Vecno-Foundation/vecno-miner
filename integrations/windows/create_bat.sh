@@ -7,4 +7,4 @@ echo ${1}.exe -a qrzs2hd6rtcx2zd4dzkzrpqjx4jg8ndmqqjle8j9cpp93gg059tludxxvvfqd -
 echo goto start >> ${1}/mine.bat
 
 
-# target\release\vecno-miner -a vecno:qzj9kz0kmc3rxl9mw86mlda2cqmvp3xhavx9h2jud5ehdchvruql6ey64r8kz -s localhost
+# target\release\vecno-miner -a vecno:qqtsqwxa3q4aw968753rya4tazahmr7jyn5zu7vkncqlvk2aqlsdsah9ut65e -s localhost
