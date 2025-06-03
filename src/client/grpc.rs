@@ -63,7 +63,7 @@ impl Client for VecnodHandler {
                 interval.tick().await;
                 let count = successful_blocks.swap(0, Ordering::SeqCst);
                 if count > 0 {
-                    info!("Successfully submitted {} blocks in the past 10 seconds", count);
+                    info!("Successfully mined {} blocks in the past 10 seconds", count);
                 }
             }
         });
