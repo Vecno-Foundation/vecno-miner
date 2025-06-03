@@ -1,6 +1,6 @@
 # Vecno-miner
 
-This miner supports Nvidia and AMD GPU's, a long with mining with your CPU.
+This miner supports Nvidia and AMD GPU's, along with mining with your CPU.
 
 ## Installation
 
