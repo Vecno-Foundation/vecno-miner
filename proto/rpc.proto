@@ -64,6 +64,7 @@ message RpcTransaction {
   uint64 gas = 6;
   string payload = 8;
   RpcTransactionVerboseData verboseData = 9;
+  uint64 mass = 10;
 }
 
 message RpcTransactionInput {
@@ -113,7 +114,7 @@ message RpcTransactionOutputVerboseData{
   string scriptPublicKeyAddress = 6;
 }
 
-// GetCurrentNetworkRequestMessage requests the network vecno is currently running against.
+// GetCurrentNetworkRequestMessage requests the network vecnod is currently running against.
 //
 // Possible networks are: Mainnet, Testnet, Simnet, Devnet
 message GetCurrentNetworkRequestMessage{
@@ -156,9 +157,9 @@ message GetBlockTemplateRequestMessage{
 message GetBlockTemplateResponseMessage{
   RpcBlock block = 3;
 
-  // Whether vecno thinks that it's synced.
-  // Callers are discouraged (but not forbidden) from solving blocks when vecno is not synced.
-  // That is because when vecno isn't in sync with the rest of the network there's a high
+  // Whether vecnod thinks that it's synced.
+  // Callers are discouraged (but not forbidden) from solving blocks when vecnod is not synced.
+  // That is because when vecnod isn't in sync with the rest of the network there's a high
   // chance the block will never be accepted, thus the solving effort would have been wasted.
   bool isSynced = 2;
 
@@ -183,7 +184,7 @@ message BlockAddedNotificationMessage{
   RpcBlock block = 3;
 }
 
-// GetPeerAddressesRequestMessage requests the list of known vecno addresses in the
+// GetPeerAddressesRequestMessage requests the list of known vecnod addresses in the
 // current network. (mainnet, testnet, etc.)
 message GetPeerAddressesRequestMessage{
 }
@@ -238,7 +239,7 @@ message MempoolEntry{
 }
 
 // GetConnectedPeerInfoRequestMessage requests information about all the p2p peers
-// currently connected to this vecno.
+// currently connected to this vecnod.
 message GetConnectedPeerInfoRequestMessage{
 }
 
@@ -254,7 +255,7 @@ message GetConnectedPeerInfoMessage{
   // How long did the last ping/pong exchange take
   int64 lastPingDuration = 3;
 
-  // Whether this vecno initiated the connection
+  // Whether this vecnod initiated the connection
   bool isOutbound = 6;
   int64 timeOffset = 7;
   string userAgent = 8;
@@ -262,15 +263,15 @@ message GetConnectedPeerInfoMessage{
   // The protocol version that this peer claims to support
   uint32 advertisedProtocolVersion = 9;
 
-  // The timestamp of when this peer connected to this vecno
+  // The timestamp of when this peer connected to this vecnod
   int64 timeConnected = 10;
 
   // Whether this peer is the IBD peer (if IBD is running)
   bool isIbdPeer = 11;
 }
 
-// AddPeerRequestMessage adds a peer to vecno's outgoing connection list.
-// This will, in most cases, result in vecno connecting to said peer.
+// AddPeerRequestMessage adds a peer to vecnod's outgoing connection list.
+// This will, in most cases, result in vecnod connecting to said peer.
 message AddPeerRequestMessage{
   string address = 1;
 
@@ -344,15 +345,9 @@ message GetSubnetworkResponseMessage{
 }
 
 // GetVirtualSelectedParentChainFromBlockRequestMessage requests the virtual selected
-// parent chain from some startHash to this vecno's current virtual
+// parent chain from some startHash to this vecnod's current virtual
 message GetVirtualSelectedParentChainFromBlockRequestMessage{
   string startHash = 1;
-  bool includeAcceptedTransactionIds = 2;
-}
-
-message AcceptedTransactionIds{
-  string acceptingBlockHash = 1;
-  repeated string acceptedTransactionIds = 2;
 }
 
 message GetVirtualSelectedParentChainFromBlockResponseMessage{
@@ -362,15 +357,11 @@ message GetVirtualSelectedParentChainFromBlockResponseMessage{
   // The chain blocks that were added, in low-to-high order
   repeated string addedChainBlockHashes = 3;
 
-  // The transactions accepted by each block in addedChainBlockHashes.
-  // Will be filled only if `includeAcceptedTransactionIds = true` in the request.
-  repeated AcceptedTransactionIds acceptedTransactionIds = 2;
-
   RPCError error = 1000;
 }
 
 // GetBlocksRequestMessage requests blocks between a certain block lowHash up to this
-// vecno's current virtual.
+// vecnod's current virtual.
 message GetBlocksRequestMessage{
   string lowHash = 1;
   bool includeBlocks = 2;
@@ -383,7 +374,7 @@ message GetBlocksResponseMessage{
   RPCError error = 1000;
 }
 
-// GetBlockCountRequestMessage requests the current number of blocks in this vecno.
+// GetBlockCountRequestMessage requests the current number of blocks in this vecnod.
 // Note that this number may decrease as pruning occurs.
 message GetBlockCountRequestMessage{
 }
@@ -395,7 +386,7 @@ message GetBlockCountResponseMessage{
 }
 
 // GetBlockDagInfoRequestMessage requests general information about the current state
-// of this vecno's DAG.
+// of this vecnod's DAG.
 message GetBlockDagInfoRequestMessage{
 }
 
@@ -435,7 +426,7 @@ message FinalityConflictResolvedNotificationMessage{
   string finalityBlockHash = 1;
 }
 
-// ShutDownRequestMessage shuts down this vecno.
+// ShutDownRequestMessage shuts down this vecnod.
 message ShutDownRequestMessage{
 }
 
@@ -459,11 +450,11 @@ message GetHeadersResponseMessage{
 // NotifyUtxosChangedRequestMessage registers this connection for utxoChanged notifications
 // for the given addresses.
 //
-// This call is only available when this vecno was started with `--utxoindex`
+// This call is only available when this vecnod was started with `--utxoindex`
 //
 // See: UtxosChangedNotificationMessage
 message NotifyUtxosChangedRequestMessage {
-  repeated string addresses = 1; // Leave empty to get all updates
+  repeated string addresses = 1;
 }
 
 message NotifyUtxosChangedResponseMessage {
@@ -487,7 +478,7 @@ message UtxosByAddressesEntry {
 // StopNotifyingUtxosChangedRequestMessage unregisters this connection for utxoChanged notifications
 // for the given addresses.
 //
-// This call is only available when this vecno was started with `--utxoindex`
+// This call is only available when this vecnod was started with `--utxoindex`
 //
 // See: UtxosChangedNotificationMessage
 message StopNotifyingUtxosChangedRequestMessage {
@@ -498,45 +489,15 @@ message StopNotifyingUtxosChangedResponseMessage {
   RPCError error = 1000;
 }
 
-// GetUtxosByAddressesRequestMessage requests all current UTXOs for the given vecno addresses
+// GetUtxosByAddressesRequestMessage requests all current UTXOs for the given vecnod addresses
 //
-// This call is only available when this vecno was started with `--utxoindex`
+// This call is only available when this vecnod was started with `--utxoindex`
 message GetUtxosByAddressesRequestMessage {
   repeated string addresses = 1;
 }
 
 message GetUtxosByAddressesResponseMessage {
   repeated UtxosByAddressesEntry entries = 1;
-
-  RPCError error = 1000;
-}
-
-// GetBalanceByAddressRequest returns the total balance in unspent transactions towards a given address
-//
-// This call is only available when this vecno was started with `--utxoindex`
-message GetBalanceByAddressRequestMessage {
-  string address = 1;
-}
-
-message GetBalanceByAddressResponseMessage {
-  uint64 balance = 1;
-
-  RPCError error = 1000;
-}
-
-message GetBalancesByAddressesRequestMessage {
-  repeated string addresses = 1;
-}
-
-message BalancesByAddressEntry{
-  string address = 1;
-  uint64 balance = 2;
-
-  RPCError error = 1000;
-}
-
-message GetBalancesByAddressesResponseMessage {
-  repeated BalancesByAddressEntry entries = 1;
 
   RPCError error = 1000;
 }
@@ -593,7 +554,7 @@ message VirtualDaaScoreChangedNotificationMessage {
 // NotifyPruningPointUTXOSetOverrideRequestMessage registers this connection for
 // pruning point UTXO set override notifications.
 //
-// This call is only available when this vecno was started with `--utxoindex`
+// This call is only available when this vecnod was started with `--utxoindex`
 //
 // See: NotifyPruningPointUTXOSetOverrideResponseMessage
 message NotifyPruningPointUTXOSetOverrideRequestMessage {
@@ -614,7 +575,7 @@ message PruningPointUTXOSetOverrideNotificationMessage {
 // StopNotifyingPruningPointUTXOSetOverrideRequestMessage unregisters this connection for
 // pruning point UTXO set override notifications.
 //
-// This call is only available when this vecno was started with `--utxoindex`
+// This call is only available when this vecnod was started with `--utxoindex`
 //
 // See: PruningPointUTXOSetOverrideNotificationMessage
 message StopNotifyingPruningPointUTXOSetOverrideRequestMessage {
@@ -650,8 +611,6 @@ message GetInfoResponseMessage{
   string p2pId = 1;
   uint64 mempoolSize = 2;
   string serverVersion = 3;
-  bool isUtxoIndexed = 4;
-  bool isSynced = 5;
   RPCError error = 1000;
 }
 
@@ -683,30 +642,4 @@ message NotifyNewBlockTemplateResponseMessage {
 message NewBlockTemplateNotificationMessage {
 }
 
-message MempoolEntryByAddress{
-  string address = 1;
-  repeated MempoolEntry sending = 2;
-  repeated MempoolEntry receiving = 3;
-}
 
-message GetMempoolEntriesByAddressesRequestMessage{
-  repeated string addresses = 1;
-  bool includeOrphanPool = 2;
-  bool filterTransactionPool = 3;
-}
-
-message  GetMempoolEntriesByAddressesResponseMessage{
-  repeated MempoolEntryByAddress entries = 1;
-
-  RPCError error = 1000;
-}
-
-message GetCoinSupplyRequestMessage{
-}
-
-message GetCoinSupplyResponseMessage{
-        uint64 maxLeor = 1; // note: this is a hard coded maxSupply, actual maxSupply is expected to deviate by upto -5%, but cannot be measured exactly.
-        uint64 circulatingLeor = 2;
-
-        RPCError error = 1000;
-}

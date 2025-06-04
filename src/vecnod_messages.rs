@@ -1,22 +1,24 @@
-use crate::proto::{
-    vecnod_message::Payload, GetBlockTemplateRequestMessage, GetInfoRequestMessage, VecnodMessage,
-    NotifyBlockAddedRequestMessage, NotifyNewBlockTemplateRequestMessage, RpcBlock, SubmitBlockRequestMessage,
-};
 use crate::{
     pow::{self, HeaderHasher},
+    proto::{
+        vecnod_message::Payload, GetBlockTemplateRequestMessage, GetInfoRequestMessage, VecnodMessage,
+        NotifyBlockAddedRequestMessage, NotifyNewBlockTemplateRequestMessage, RpcBlock, SubmitBlockRequestMessage,
+    },
     Hash,
 };
 
 impl VecnodMessage {
+    #[must_use]
     #[inline(always)]
     pub fn get_info_request() -> Self {
         VecnodMessage { payload: Some(Payload::GetInfoRequest(GetInfoRequestMessage {})) }
     }
+    #[must_use]
     #[inline(always)]
     pub fn notify_block_added() -> Self {
         VecnodMessage { payload: Some(Payload::NotifyBlockAddedRequest(NotifyBlockAddedRequestMessage {})) }
     }
-
+    #[must_use]
     #[inline(always)]
     pub fn submit_block(block: RpcBlock) -> Self {
         VecnodMessage {
@@ -29,17 +31,20 @@ impl VecnodMessage {
 }
 
 impl From<GetInfoRequestMessage> for VecnodMessage {
+    #[inline(always)]
     fn from(a: GetInfoRequestMessage) -> Self {
         VecnodMessage { payload: Some(Payload::GetInfoRequest(a)) }
     }
 }
 impl From<NotifyBlockAddedRequestMessage> for VecnodMessage {
+    #[inline(always)]
     fn from(a: NotifyBlockAddedRequestMessage) -> Self {
         VecnodMessage { payload: Some(Payload::NotifyBlockAddedRequest(a)) }
     }
 }
 
 impl From<GetBlockTemplateRequestMessage> for VecnodMessage {
+    #[inline(always)]
     fn from(a: GetBlockTemplateRequestMessage) -> Self {
         VecnodMessage { payload: Some(Payload::GetBlockTemplateRequest(a)) }
     }
@@ -52,6 +57,7 @@ impl From<NotifyNewBlockTemplateRequestMessage> for VecnodMessage {
 }
 
 impl RpcBlock {
+    #[must_use]
     #[inline(always)]
     pub fn block_hash(&self) -> Option<Hash> {
         let mut hasher = HeaderHasher::new();
