@@ -93,19 +93,18 @@ extern "C" {
             }
             uint32_t product1, product2;
             #pragma unroll
-            for (int rowId = 0; rowId < HALF_MATRIX_SIZE; rowId++) {
-                uint32_t product1, product2;
+            for (int rowId=0; rowId<HALF_MATRIX_SIZE; rowId++){
+
                 amul4bit((uint32_t *)(matrix[(2*rowId)]), (uint32_t *)(packed_hash), &product1);
                 amul4bit((uint32_t *)(matrix[(2*rowId+1)]), (uint32_t *)(packed_hash), &product2);
-                
-                uint8_t result1 = ((product1 & 0xF) ^ ((product1 >> 4) & 0xF) ^ ((product1 >> 8) & 0xF)) << 4;
-                uint8_t result2 = (product2 & 0xF) ^ ((product2 >> 4) & 0xF) ^ ((product2 >> 8) & 0xF);
-                
+                product1 >>= 6;
+                product1 &= 0xF0;
+                product2 >>= 10;
                 #if __CUDA_ARCH__ < 500 || __CUDA_ARCH__ > 700
-                hash_.hash[rowId] = hash_.hash[rowId] ^ (result1 | result2);
+                hash_.hash[rowId] = hash_.hash[rowId] ^ ((uint8_t)(product1) | (uint8_t)(product2));
                 #else
                 uint32_t lop_temp = hash_.hash[rowId];
-                asm("lop3.b32" " %0, %1, %2, %3, 0x56;": "=r" (lop_temp): "r" (result1), "r" (result2), "r" (lop_temp));
+                asm("lop3.b32" " %0, %1, %2, %3, 0x56;": "=r" (lop_temp): "r" (product1), "r" (product2), "r" (lop_temp));
                 hash_.hash[rowId] = lop_temp;
                 #endif
             }
