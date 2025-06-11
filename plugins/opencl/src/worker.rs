@@ -195,7 +195,7 @@ impl OpenCLGPUWorker {
         let context_ref = unsafe { Arc::as_ptr(&context).as_ref().unwrap() };
 
         let options = if experimental_amd {
-            "-D EXPERIMENTAL_AMD"
+            "-D EXPERIMENTAL_AMD "
         } else {
             ""
         };
@@ -253,7 +253,7 @@ impl OpenCLGPUWorker {
             ptr::null_mut(),
         )
             .expect("Buffer allocation failed");
-        let target = Buffer::<[cl_ulong; 4]>::create(context_ref, CL_MEM_READ_ONLY, 1, ptr::null_mut())
+        let target = Buffer::<[cl_ulong; 4]>::create(context_ref, CL_MEM_READ_ONLY, 4, ptr::null_mut())
             .expect("Buffer allocation failed");
 
         let mut seed = [1u64; 4];
@@ -263,7 +263,7 @@ impl OpenCLGPUWorker {
             NonceGenEnum::Xoshiro => {
                 info!("Using xoshiro for nonce-generation");
                 let random_state =
-                    Buffer::<[cl_ulong; 4]>::create(context_ref, CL_MEM_READ_WRITE, chosen_workload, ptr::null_mut())
+                    Buffer::<[cl_ulong; 4]>::create(context_ref, CL_MEM_READ_WRITE, 4 * chosen_workload, ptr::null_mut())
                         .expect("Buffer allocation failed");
                 let rand_state =
                     Xoshiro256StarStar::new(&seed).iter_jump_state().take(chosen_workload).collect::<Vec<[u64; 4]>>();
@@ -335,7 +335,6 @@ fn from_source(context: &Context, device: &Device, options: &str) -> Result<Prog
     let version = device.version()?;
     let v = version.split(' ').nth(1).unwrap();
     let mut compile_options = String::from(options);
-    compile_options += " ";
     compile_options += CL_MAD_ENABLE;
     compile_options += CL_FINITE_MATH_ONLY;
     if v == "2.0" || v == "2.1" || v == "3.0" {
@@ -344,7 +343,7 @@ fn from_source(context: &Context, device: &Device, options: &str) -> Result<Prog
     }
     compile_options += &match Platform::new(device.platform().unwrap()).name() {
         Ok(name) => format!(
-            " -D{}",
+            "-D {} ",
             name.chars()
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
                 .collect::<String>()
@@ -353,17 +352,17 @@ fn from_source(context: &Context, device: &Device, options: &str) -> Result<Prog
         Err(_) => String::new(),
     };
     compile_options += &match device.compute_capability_major_nv() {
-        Ok(major) => format!(" -D __COMPUTE_MAJOR__={}", major),
+        Ok(major) => format!("-D __COMPUTE_MAJOR__={} ", major),
         Err(_) => String::new(),
     };
     compile_options += &match device.compute_capability_minor_nv() {
-        Ok(minor) => format!(" -D __COMPUTE_MINOR__={}", minor),
+        Ok(minor) => format!("-D __COMPUTE_MINOR__={} ", minor),
         Err(_) => String::new(),
     };
     compile_options += &match device.pcie_id_amd() {
         Ok(_) => {
             let device_name = device.name().unwrap_or_else(|_| "Unknown".into()).to_lowercase();
-            format!(" -D OPENCL_PLATFORM_AMD -D __{}__", device_name)
+            format!("-D OPENCL_PLATFORM_AMD -D __{}__ ", device_name)
         }
         Err(_) => String::new(),
     };
