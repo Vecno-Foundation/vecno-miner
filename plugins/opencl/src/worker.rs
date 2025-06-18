@@ -14,7 +14,6 @@ use opencl3::platform::Platform;
 use opencl3::program::{Program, CL_FINITE_MATH_ONLY, CL_MAD_ENABLE, CL_STD_2_0};
 use opencl3::types::{cl_event, cl_uchar, cl_ulong, CL_BLOCKING};
 use rand::{thread_rng, Fill, RngCore};
-use std::borrow::Borrow;
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::Arc;
@@ -112,7 +111,7 @@ impl Worker for OpenCLGPUWorker {
             .set_arg(&self.final_nonce)
             .set_arg(&self.final_hash)
             .set_global_work_size(self.workload)
-            .set_event_wait_list(self.events.borrow())
+            .set_event_wait_list(&self.events)
             .enqueue_nd_range(&self.queue)
             .map_err(|e| {
                 error!("Kernel arg setup failed: {}", e);
@@ -166,18 +165,21 @@ impl OpenCLGPUWorker {
         device: Device,
         workload: f32,
         is_absolute: bool,
-        experimental_amd: bool,
-        mut use_binary: bool,
+        mut experimental_amd: bool,
+        use_binary: bool,
         random: &NonceGenEnum,
     ) -> Result<Self, Error> {
-        let name = device.board_name_amd().unwrap_or_else(|_| device.name().unwrap_or_else(|_| "Unknown Device".into()));
+        let raw_board_name = device.name().unwrap_or_else(|_| "unknown".to_string()).to_lowercase();
+        // Normalize board name by stripping :xnack- or :xnack+
+        let board_name = raw_board_name.split(':').next().unwrap_or(&raw_board_name).to_string();
+        let name = device.name().unwrap_or_else(|_| "Unknown Device".to_string());
         info!("{}: Using OpenCL", name);
-        let version = device.version().unwrap_or_else(|_| "unknown version".into());
+        let version = device.version().unwrap_or_else(|_| "unknown version".to_string());
         info!(
             "{}: Device supports {} with extensions: {}",
             name,
             version,
-            device.extensions().unwrap_or_else(|_| "NA".into())
+            device.extensions().unwrap_or_else(|_| "NA".to_string())
         );
 
         let local_size = device.max_work_group_size().map_err(|e| e.to_string())?;
@@ -194,36 +196,44 @@ impl OpenCLGPUWorker {
             Arc::new(Context::from_device(&device).unwrap_or_else(|_| panic!("{}::Context::from_device failed", name)));
         let context_ref = unsafe { Arc::as_ptr(&context).as_ref().unwrap() };
 
+        // Force experimental_amd for specific architectures
+        if matches!(
+            board_name.as_str(),
+            "gfx1011" | "gfx1012" | "gfx1030" | "gfx1031" | "gfx1032" | "gfx1034" | "gfx906"
+        ) {
+            experimental_amd = true;
+        }
+
         let options = if experimental_amd {
             "-D EXPERIMENTAL_AMD "
         } else {
             ""
         };
 
+        // Restrict experimental_amd to supported GPUs
         let experimental_amd_use = !matches!(
-            device.name().unwrap_or_else(|_| "Unknown".into()).to_lowercase().as_str(),
+            board_name.as_str(),
+            "gfx1010" | "gfx1100" | "gfx1101" | "gfx1201" | "unknown"
+        ) && !matches!(
+            device.name().unwrap_or_else(|_| "Unknown".to_string()).to_lowercase().as_str(),
             "tahiti" | "ellesmere" | "gfx1010" | "gfx906" | "gfx908"
         );
 
         let program = match use_binary {
             true => {
-                let mut device_name = device.name().unwrap_or_else(|_| "Unknown".into()).to_lowercase();
-                if device_name.contains(':') {
-                    device_name = device_name.split_once(':').expect("We checked for `:`").0.to_string();
-                }
-                info!("{}: Looking for binary for {}", name, device_name);
-                match BINARY_DIR.get_file(format!("{}_vecno-opencl.bin", device_name)) {
+                let device_name = board_name.clone();
+                let binary_name = format!("{}_vecno-opencl.bin", device_name);
+                info!("{}: Looking for binary for {}", name, binary_name);
+                match BINARY_DIR.get_file(&binary_name) {
                     Some(binary) => {
                         Program::create_and_build_from_binary(&context, &[binary.contents()], "").unwrap_or_else(|e| {
-                            warn!("Binary file not found for {}. Reverting to compiling from source: {}", device_name, e);
-                            use_binary = false;
+                            warn!("Binary file not found for {}. Reverting to compiling from source: {}", binary_name, e);
                             from_source(&context, &device, options)
                                 .unwrap_or_else(|e| panic!("{}::Program::create_and_build_from_source failed: {}", name, e))
                         })
                     }
                     None => {
-                        warn!("Binary file not found for {}. Reverting to compiling from source.", device_name);
-                        use_binary = false;
+                        warn!("Binary file not found for {}. Reverting to compiling from source.", binary_name);
                         from_source(&context, &device, options)
                             .unwrap_or_else(|e| panic!("{}::Program::create_and_build_from_source failed: {}", name, e))
                     }
@@ -249,7 +259,7 @@ impl OpenCLGPUWorker {
         let matrix = Buffer::<cl_uchar>::create(
             context_ref,
             CL_MEM_READ_ONLY,
-            if experimental_amd { 64 * 64 / 2 } else { 64 * 64 },
+            if experimental_amd && experimental_amd_use { 64 * 64 / 2 } else { 64 * 64 },
             ptr::null_mut(),
         )
             .expect("Buffer allocation failed");
@@ -326,7 +336,7 @@ impl OpenCLGPUWorker {
             matrix,
             target,
             events: Vec::<cl_event>::new(),
-            experimental_amd: (experimental_amd | use_binary) & experimental_amd_use,
+            experimental_amd: experimental_amd && experimental_amd_use,
         })
     }
 }
@@ -361,7 +371,8 @@ fn from_source(context: &Context, device: &Device, options: &str) -> Result<Prog
     };
     compile_options += &match device.pcie_id_amd() {
         Ok(_) => {
-            let device_name = device.name().unwrap_or_else(|_| "Unknown".into()).to_lowercase();
+            let raw_board_name = device.name().unwrap_or_else(|_| "unknown".to_string()).to_lowercase();
+            let device_name = raw_board_name.split(':').next().unwrap_or(&raw_board_name).to_string();
             format!("-D OPENCL_PLATFORM_AMD -D __{}__ ", device_name)
         }
         Err(_) => String::new(),
