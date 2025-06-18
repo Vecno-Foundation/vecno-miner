@@ -1,5 +1,7 @@
+// Catering for different flavors
+#ifdef OPENCL_PLATFORM_AMD
 #pragma OPENCL EXTENSION cl_amd_media_ops : enable
-#pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
+#endif
 
 #if __OPENCL_VERSION__ <= CL_VERSION_1_1
 #define STATIC
@@ -59,7 +61,12 @@ typedef struct {
     blake3_chunk_state chunk;
 } blake3_hasher;
 
-STATIC inline uint32_t load32(__private const uint8_t* src) {
+STATIC inline uint32_t load32_private(__private const uint8_t* src) {
+    return ((uint32_t)(src[0]) << 0) | ((uint32_t)(src[1]) << 8) |
+           ((uint32_t)(src[2]) << 16) | ((uint32_t)(src[3]) << 24);
+}
+
+STATIC inline uint32_t load32_constant(__constant const uint8_t* src) {
     return ((uint32_t)(src[0]) << 0) | ((uint32_t)(src[1]) << 8) |
            ((uint32_t)(src[2]) << 16) | ((uint32_t)(src[3]) << 24);
 }
@@ -168,7 +175,7 @@ STATIC inline void compress_pre(__private uint32_t state[16], __private const ui
     __private uint32_t block_words[16];
     #pragma unroll
     for (int i = 0; i < 16; i++) {
-        block_words[i] = load32(block + 4 * i);
+        block_words[i] = load32_private(block + 4 * i);
     }
 
     #pragma unroll
@@ -292,19 +299,35 @@ STATIC inline ulong xoshiro256_next(__private ulong4 *s) {
 __global int lock = 0;
 #endif
 
-STATIC inline void _amul4bit(__private uchar4 packed_vec1[QUARTER_MATRIX_SIZE], __private uchar4 packed_vec2[QUARTER_MATRIX_SIZE], __private uint32_t *ret) {
+#if defined(OPENCL_PLATFORM_AMD) && ((defined(OFFLINE) && defined(__gfx906__)) || defined(__gfx1011__) || defined(__gfx1012__) || defined(__gfx1030__) || defined(__gfx1031__) || defined(__gfx1032__) || defined(__gfx1034__))
+#define amul4bit(X,Y,Z) _amul4bit_amd(X, Y, Z)
+STATIC inline void _amul4bit_amd(__private uint32_t packed_vec1[QUARTER_MATRIX_SIZE], __private uint32_t packed_vec2[QUARTER_MATRIX_SIZE], __private uint32_t *ret) {
     uint32_t res = 0;
+    #if defined(__FORCE_AMD_V_DOT8_U32_U4__)
+    #pragma unroll
+    for (int i = 0; i < 8; i++) {
+        __asm__("v_dot8_u32_u4 %0, %1, %2, %3;" : "=v" (res) : "r" (packed_vec1[i]), "r" (packed_vec2[i]), "v" (res));
+    }
+    #else
     #pragma unroll
     for (int i = 0; i < QUARTER_MATRIX_SIZE; i++) {
-        res += (packed_vec1[i].x * packed_vec2[i].x) +
-               (packed_vec1[i].y * packed_vec2[i].y) +
-               (packed_vec1[i].z * packed_vec2[i].z) +
-               (packed_vec1[i].w * packed_vec2[i].w);
+        __asm__("v_dot4_u32_u8 %0, %1, %2, %3;" : "=v" (res) : "r" (packed_vec1[i]), "r" (packed_vec2[i]), "v" (res));
     }
+    #endif
     *ret = res;
 }
-
+#else
 #define amul4bit(X,Y,Z) _amul4bit(X, Y, Z)
+STATIC inline void _amul4bit(__private uchar4 packed_vec1[QUARTER_MATRIX_SIZE], __private uchar4 packed_vec2[QUARTER_MATRIX_SIZE], __private uint32_t *ret) {
+    ushort4 res = 0;
+    #pragma unroll
+    for (int i = 0; i < QUARTER_MATRIX_SIZE; i++) {
+        res += convert_ushort4(packed_vec1[i]) * convert_ushort4(packed_vec2[i]);
+    }
+    res.s01 = res.s01 + res.s23;
+    *ret = res.s0 + res.s1;
+}
+#endif
 
 typedef union _Hash {
     ulong4 hash;
@@ -320,6 +343,10 @@ STATIC inline bool compare_u256(__private ulong4 a, __private ulong4 b) {
     if (a.y != b.y) return a.y < b.y;
     return a.x < b.x;
 }
+
+#ifdef cl_khr_int64_base_atomics
+#pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
+#endif
 
 /* KERNEL CODE */
 kernel void heavy_hash(
@@ -385,6 +412,16 @@ kernel void heavy_hash(
 
     // Convert hash to 4-bit values
     __private uchar4 packed_hash[QUARTER_MATRIX_SIZE];
+    __private uint32_t packed_hash_amd[QUARTER_MATRIX_SIZE];
+    #if defined(OPENCL_PLATFORM_AMD) && ((defined(OFFLINE) && defined(__gfx906__)) || defined(__gfx1011__) || defined(__gfx1012__) || defined(__gfx1030__) || defined(__gfx1031__) || defined(__gfx1032__) || defined(__gfx1034__))
+    #pragma unroll
+    for (int i = 0; i < QUARTER_MATRIX_SIZE / 2; i++) {
+        uint bytes = ((uint)hash_.bytes[4 * i] << 24) | ((uint)hash_.bytes[4 * i + 1] << 16) |
+                     ((uint)hash_.bytes[4 * i + 2] << 8) | (uint)hash_.bytes[4 * i + 3];
+        packed_hash_amd[2 * i] = ((bytes >> 16) & 0xFFFF) | ((bytes << 16) & 0xFFFF0000);
+        packed_hash_amd[2 * i + 1] = ((bytes >> 0) & 0xFFFF) | ((bytes << 16) & 0xFFFF0000);
+    }
+    #else
     #pragma unroll
     for (int i = 0; i < QUARTER_MATRIX_SIZE / 2; i++) {
         uint bytes = ((uint)hash_.bytes[4 * i] << 24) | ((uint)hash_.bytes[4 * i + 1] << 16) |
@@ -402,35 +439,28 @@ kernel void heavy_hash(
             bytes & 0x0F
         );
     }
+    #endif
 
     // Matrix multiplication
     __private uint8_t product_bytes[32];
     #pragma unroll
     for (int rowId = 0; rowId < HALF_MATRIX_SIZE; rowId++) {
         __private uint32_t product1, product2;
+        #if defined(OPENCL_PLATFORM_AMD) && ((defined(OFFLINE) && defined(__gfx906__)) || defined(__gfx1011__) || defined(__gfx1012__) || defined(__gfx1030__) || defined(__gfx1031__) || defined(__gfx1032__) || defined(__gfx1034__))
+        __private uint32_t packed_matrix1[QUARTER_MATRIX_SIZE], packed_matrix2[QUARTER_MATRIX_SIZE];
+        #pragma unroll
+        for (int i = 0; i < QUARTER_MATRIX_SIZE; i++) {
+            uint m1 = load32_constant(matrix + ((2 * rowId) * MATRIX_SIZE + 4 * i) / 2);
+            uint m2 = load32_constant(matrix + ((2 * rowId + 1) * MATRIX_SIZE + 4 * i) / 2);
+            packed_matrix1[i] = ((m1 >> 16) & 0xFFFF) | ((m1 << 16) & 0xFFFF0000);
+            packed_matrix2[i] = ((m2 >> 16) & 0xFFFF) | ((m2 << 16) & 0xFFFF0000);
+        }
+        amul4bit(packed_matrix1, packed_hash_amd, &product1);
+        amul4bit(packed_matrix2, packed_hash_amd, &product2);
+        #else
         __private uchar4 packed_matrix1[QUARTER_MATRIX_SIZE], packed_matrix2[QUARTER_MATRIX_SIZE];
         #pragma unroll
         for (int i = 0; i < QUARTER_MATRIX_SIZE; i++) {
-            #ifdef EXPERIMENTAL_AMD
-            // Packed matrix: each byte contains two 4-bit values
-            uint8_t m1 = matrix[((2 * rowId) * MATRIX_SIZE + 4 * i) / 2];
-            uint8_t m2 = matrix[((2 * rowId) * MATRIX_SIZE + 4 * i + 2) / 2];
-            uint8_t m3 = matrix[((2 * rowId + 1) * MATRIX_SIZE + 4 * i) / 2];
-            uint8_t m4 = matrix[((2 * rowId + 1) * MATRIX_SIZE + 4 * i + 2) / 2];
-            packed_matrix1[i] = (uchar4)(
-                (m1 & 0xF0) >> 4,
-                (m1 & 0x0F),
-                (m2 & 0xF0) >> 4,
-                (m2 & 0x0F)
-            );
-            packed_matrix2[i] = (uchar4)(
-                (m3 & 0xF0) >> 4,
-                (m3 & 0x0F),
-                (m4 & 0xF0) >> 4,
-                (m4 & 0x0F)
-            );
-            #else
-            // Unpacked matrix: each byte is a 4-bit value
             packed_matrix1[i] = (uchar4)(
                 matrix[(2 * rowId) * MATRIX_SIZE + 4 * i] & 0x0F,
                 matrix[(2 * rowId) * MATRIX_SIZE + 4 * i + 1] & 0x0F,
@@ -443,13 +473,10 @@ kernel void heavy_hash(
                 matrix[(2 * rowId + 1) * MATRIX_SIZE + 4 * i + 2] & 0x0F,
                 matrix[(2 * rowId + 1) * MATRIX_SIZE + 4 * i + 3] & 0x0F
             );
-            #endif
         }
-
         amul4bit(packed_matrix1, packed_hash, &product1);
         amul4bit(packed_matrix2, packed_hash, &product2);
-
-        // Optimized reduction logic
+        #endif
         product_bytes[rowId] = hash_.bytes[rowId] ^ ((uint8_t)((product1 >> 6) & 0xF0) | (uint8_t)((product2 >> 10) & 0x0F));
     }
 
@@ -470,6 +497,8 @@ kernel void heavy_hash(
     if (!atom_cmpxchg(&lock, 0, 1)) {
         *final_nonce = nonce;
         *final_hash = hash_.hash;
+        work_group_barrier(CLK_GLOBAL_MEM_FENCE); // Ensure updates are visible
+        lock = 0; // Release lock
     }
     #endif
 }
