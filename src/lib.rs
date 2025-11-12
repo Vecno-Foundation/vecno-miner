@@ -3,6 +3,7 @@ use std::any::Any;
 use std::error::Error as StdError;
 
 pub mod xoshiro256starstar;
+
 use libloading::{Library, Symbol};
 
 pub type Error = Box<dyn StdError + Send + Sync + 'static>;
@@ -13,13 +14,12 @@ pub struct PluginManager {
     loaded_libraries: Vec<Library>,
 }
 
-/**
- Plugin Manager class - allows inserting your own hashers
- Inspired by https://michael-f-bryan.github.io/rust-ffi-guide/dynamic_loading.html
-*/
 impl PluginManager {
     pub fn new() -> Self {
-        Self { plugins: Vec::new(), loaded_libraries: Vec::new() }
+        Self {
+            plugins: Vec::new(),
+            loaded_libraries: Vec::new(),
+        }
     }
 
     pub(crate) unsafe fn load_single_plugin<'help>(
@@ -65,13 +65,10 @@ impl PluginManager {
         Ok(specs)
     }
 
-    /**
-    Process the options for a plugin, and reports how many workers are available
-    */
-    pub fn process_options(&mut self, matchs: &ArgMatches) -> Result<usize, Error> {
+    pub fn process_options(&mut self, matches: &ArgMatches) -> Result<usize, Error> {
         let mut count = 0usize;
         self.plugins.iter_mut().for_each(|plugin| {
-            count += match plugin.process_option(matchs) {
+            count += match plugin.process_option(matches) {
                 Ok(n) => n,
                 Err(e) => {
                     eprintln!(
@@ -89,34 +86,30 @@ impl PluginManager {
     pub fn has_specs(&self) -> bool {
         !self.plugins.is_empty()
     }
+
+    // New method to access plugin names
+    pub fn plugin_names(&self) -> Vec<&'static str> {
+        self.plugins.iter().map(|plugin| plugin.name()).collect()
+    }
 }
 
 pub trait Plugin: Any + Send + Sync {
     fn name(&self) -> &'static str;
     fn enabled(&self) -> bool;
     fn get_worker_specs(&self) -> Vec<Box<dyn WorkerSpec>>;
-    fn process_option(&mut self, matchs: &ArgMatches) -> Result<usize, Error>;
+    fn process_option(&mut self, matches: &ArgMatches) -> Result<usize, Error>;
 }
 
 pub trait WorkerSpec: Any + Send + Sync {
-    /*type_: GPUWorkType,
-    opencl_platform: u16,
-    device_id: u32,
-    workload: f32,
-    is_absolute: bool*/
     fn id(&self) -> String;
     fn build(&self) -> Box<dyn Worker>;
 }
 
-
-pub trait Worker: {
-    //fn new(device_id: u32, workload: f32, is_absolute: bool) -> Result<Self, Error>;
+pub trait Worker {
     fn id(&self) -> String;
-    fn load_block_constants(&mut self, hash_header: &[u8; 72], matrix: &[[u16; 64]; 64], target: &[u64; 4]);
-
-    fn calculate_hash(&mut self, nonces: Option<&Vec<u64>>, nonce_mask: u64, nonce_fixed: u64);
+    fn load_block_constants(&mut self, hash_header: &[u8; 72], target: &[u64; 4]);
+    fn calculate_hash(&mut self, nonces: Option<&Vec<u64>>, nonce_mask: u64, nonce_fixed: u64, timestamp: u64);
     fn sync(&self) -> Result<(), Error>;
-
     fn get_workload(&self) -> usize;
     fn copy_output_to(&mut self, nonces: &mut Vec<u64>) -> Result<(), Error>;
 }
@@ -146,7 +139,6 @@ macro_rules! declare_plugin {
         pub unsafe extern "C" fn _plugin_create(
             app: *mut clap::App,
         ) -> (*mut clap::App, *mut dyn $crate::Plugin, *const $crate::Error) {
-            // make sure the constructor is the correct type.
             let constructor: fn() -> Result<$plugin_type, $crate::Error> = $constructor;
 
             let object = match constructor() {
@@ -154,14 +146,13 @@ macro_rules! declare_plugin {
                 Err(e) => {
                     return (
                         app,
-                        unsafe { std::mem::MaybeUninit::zeroed().assume_init() }, // Translates to null pointer
+                        std::mem::MaybeUninit::zeroed().assume_init(),
                         Box::into_raw(Box::new(e)),
                     );
                 }
             };
 
             let boxed: Box<dyn $crate::Plugin> = Box::new(object);
-
             let boxed_app = Box::new(<$args>::augment_args(unsafe { *Box::from_raw(app) }));
             (Box::into_raw(boxed_app), Box::into_raw(boxed), std::ptr::null::<Error>())
         }

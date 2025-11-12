@@ -1,0 +1,8 @@
+{
+    "C_Cpp.errorSquiggles": "disabled",
+    "files.associations": {
+        "iosfwd": "cpp",
+        "xoshiro256starstar.c": "cpp",
+        "unordered_map": "cpp"
+    }
+}

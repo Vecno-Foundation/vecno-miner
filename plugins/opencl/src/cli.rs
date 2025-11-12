@@ -32,17 +32,10 @@ pub struct OpenCLOpt {
         help = "The values given by workload are not ratio, but absolute number of nonces in OpenCL [default: false]"
     )]
     pub opencl_workload_absolute: bool,
-    #[clap(long = "opencl-enable", help = "Enable opencl, and take all devices of the chosen platform")]
-    pub opencl_enable: bool,
     #[clap(long = "opencl-amd-disable", help = "Disables AMD mining (does not override opencl-enable)")]
     pub opencl_amd_disable: bool,
     #[clap(long = "opencl-no-amd-binary", help = "Disable fetching of precompiled AMD kernel (if exists)")]
     pub opencl_no_amd_binary: bool,
-    #[clap(
-        long = "experimental-amd",
-        help = "Uses SMID instructions in AMD. Miner will crash if instruction is not supported"
-    )]
-    pub experimental_amd: bool,
     #[clap(
         long = "opencl-nonce-gen",
         help = "The random method used to generate nonces. Options: (i) xoshiro (ii) lean",

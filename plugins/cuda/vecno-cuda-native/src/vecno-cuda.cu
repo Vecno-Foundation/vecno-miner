@@ -1,60 +1,84 @@
-#include<stdint.h>
-#include <assert.h>
+#include <stdint.h>
+#include <string.h>
 #include "xoshiro256starstar.c"
 #include "blake3_compact.h"
-
-
-typedef uint8_t Hash[32];
 
 typedef union _uint256_t {
     uint64_t number[4];
     uint8_t hash[32];
 } uint256_t;
 
-#define BLOCKDIM 1024
-#define MATRIX_SIZE 64
-#define HALF_MATRIX_SIZE 32
-#define QUARTER_MATRIX_SIZE 16
+#define BLOCKDIM 128
+#define SBOX_SIZE 64
 #define HASH_HEADER_SIZE 72
 
 #define RANDOM_LEAN 0
 #define RANDOM_XOSHIRO 1
 
-#define LT_U256(X,Y) (X.number[3] != Y.number[3] ? X.number[3] < Y.number[3] : X.number[2] != Y.number[2] ? X.number[2] < Y.number[2] : X.number[1] != Y.number[1] ? X.number[1] < Y.number[1] : X.number[0] < Y.number[0])
+#define LT_U256(X, Y) (X.number[3] != Y.number[3] ? X.number[3] < Y.number[3] : X.number[2] != Y.number[2] ? X.number[2] < Y.number[2] : X.number[1] != Y.number[1] ? X.number[1] < Y.number[1] : X.number[0] < Y.number[0])
 
-__constant__ uint8_t matrix[MATRIX_SIZE][MATRIX_SIZE];
 __constant__ uint8_t hash_header[HASH_HEADER_SIZE];
 __constant__ uint256_t target;
 
-__device__ __inline__ void amul4bit(uint32_t packed_vec1[32], uint32_t packed_vec2[32], uint32_t *ret) {
-    // We assume each 32 bits have four values: A0 B0 C0 D0
-    unsigned int res = 0;
-    #if __CUDA_ARCH__ < 610
-    char4 *a4 = (char4*)packed_vec1;
-    char4 *b4 = (char4*)packed_vec2;
-    #endif
+__device__ __inline__ void bit_manipulations(uint8_t* data) {
+    uint32_t* d = (uint32_t*)data;
     #pragma unroll
-    for (int i=0; i<QUARTER_MATRIX_SIZE; i++) {
-        #if __CUDA_ARCH__ >= 610
-        res = __dp4a(packed_vec1[i], packed_vec2[i], res);
-        #else
-        res += a4[i].x*b4[i].x;
-        res += a4[i].y*b4[i].y;
-        res += a4[i].z*b4[i].z;
-        res += a4[i].w*b4[i].w;
-        #endif
+    for (int i = 0; i < 8; i++) {
+        uint32_t val = d[i];
+        uint32_t xor1 = (val >> 8) & 0xFF;
+        uint32_t xor2 = ((val >> 24) & 0xFF) << 16;
+        d[i] = val ^ xor1 ^ xor2;
     }
-
-    *ret = res;
 }
 
+__device__ __inline__ void byte_mixing(const uint8_t* b3_hash1, const uint8_t* b3_hash2, uint8_t* result) {
+    const uint32_t* h1 = (const uint32_t*)b3_hash1;
+    const uint32_t* h2 = (const uint32_t*)b3_hash2;
+    uint32_t* res = (uint32_t*)result;
+    #pragma unroll
+    for (int i = 0; i < 8; i++) {
+        res[i] = h1[i] ^ h2[i];
+    }
+}
+
+__device__ __inline__ void u32_array_to_u8_array(const uint32_t* result, uint8_t* output) {
+    memcpy(output, result, 32);
+}
+
+__device__ __inline__ void generate_sbox(const uint8_t* input_bytes, uint8_t* sbox) {
+    uint8_t seed[32];
+    blake3_hasher hasher;
+    blake3_hasher_init(&hasher);
+    blake3_hasher_update(&hasher, input_bytes, 32);
+    blake3_hasher_finalize(&hasher, seed, BLAKE3_OUT_LEN);
+
+    for (int i = 0; i < 64; i += 2) {
+        sbox[i] = seed[0];
+        sbox[i + 1] = seed[1];
+        blake3_hasher_init(&hasher);
+        blake3_hasher_update(&hasher, seed, 32);
+        blake3_hasher_finalize(&hasher, seed, BLAKE3_OUT_LEN);
+    }
+}
+
+__device__ __inline__ uint64_t calculate_rounds(const uint8_t* input_bytes, uint64_t timestamp) {
+    uint8_t hash[32];
+    blake3_hasher hasher;
+    blake3_hasher_init(&hasher);
+    blake3_hasher_update(&hasher, input_bytes, 32);
+    blake3_hasher_update(&hasher, &timestamp, 8);
+    blake3_hasher_finalize(&hasher, hash, BLAKE3_OUT_LEN);
+
+    uint32_t value = ((const uint32_t*)hash)[0];
+    return (value % 8 + 16);
+}
 
 extern "C" {
+    __global__ void mem_hash(const uint64_t nonce_mask, const uint64_t nonce_fixed, const uint64_t nonces_len, uint8_t random_type, void* states, uint64_t* final_nonce, uint64_t timestamp) {
+        uint8_t sbox[SBOX_SIZE];
+        uint64_t rounds;
 
-
-    __global__ void heavy_hash(const uint64_t nonce_mask, const uint64_t nonce_fixed, const uint64_t nonces_len, uint8_t random_type, void* states, uint64_t *final_nonce) {
-        // assuming header_len is 72
-        int nonceId = threadIdx.x + blockIdx.x*blockDim.x;
+        int nonceId = threadIdx.x + blockIdx.x * blockDim.x;
         if (nonceId < nonces_len) {
             if (nonceId == 0) *final_nonce = 0;
             uint64_t nonce;
@@ -68,56 +92,120 @@ extern "C" {
                     break;
             }
             nonce = (nonce & nonce_mask) | nonce_fixed;
-            // header
+
+            // Step 1: BLAKE3(hash_header || nonce) to get input_hash
             uint8_t input[80];
             memcpy(input, hash_header, HASH_HEADER_SIZE);
-            // data
-            // TODO: check endianity?
-            uint256_t hash_;
-            memcpy(input +  HASH_HEADER_SIZE, (uint8_t *)(&nonce), 8);
+            uint256_t input_hash;
+            memcpy(input + HASH_HEADER_SIZE, (uint8_t*)&nonce, 8);
             blake3_hasher pow_hasher;
             blake3_hasher_init(&pow_hasher);
             blake3_hasher_update(&pow_hasher, input, 80);
-            blake3_hasher_finalize(&pow_hasher, hash_.hash, BLAKE3_KEY_LEN);
+            blake3_hasher_finalize(&pow_hasher, input_hash.hash, BLAKE3_OUT_LEN);
 
-            //assert((rowId != 0) || (hashId != 0) );
-            uchar4 packed_hash[QUARTER_MATRIX_SIZE] = {0};
-            #pragma unroll
-            for (int i=0; i<QUARTER_MATRIX_SIZE; i++) {
-                packed_hash[i] = make_uchar4(
-                    (hash_.hash[2*i] & 0xF0) >> 4 ,
-                    (hash_.hash[2*i] & 0x0F),
-                    (hash_.hash[2*i+1] & 0xF0) >> 4,
-                    (hash_.hash[2*i+1] & 0x0F)
-                );
-            }
-            uint32_t product1, product2;
-            #pragma unroll
-            for (int rowId=0; rowId<HALF_MATRIX_SIZE; rowId++){
+            // Step 2: Compute sbox and rounds
+            generate_sbox(input_hash.hash, sbox);
+            rounds = calculate_rounds(input_hash.hash, timestamp);
 
-                amul4bit((uint32_t *)(matrix[(2*rowId)]), (uint32_t *)(packed_hash), &product1);
-                amul4bit((uint32_t *)(matrix[(2*rowId+1)]), (uint32_t *)(packed_hash), &product2);
-                product1 >>= 6;
-                product1 &= 0xF0;
-                product2 >>= 10;
-                #if __CUDA_ARCH__ < 500 || __CUDA_ARCH__ > 700
-                hash_.hash[rowId] = hash_.hash[rowId] ^ ((uint8_t)(product1) | (uint8_t)(product2));
-                #else
-                uint32_t lop_temp = hash_.hash[rowId];
-                asm("lop3.b32" " %0, %1, %2, %3, 0x56;": "=r" (lop_temp): "r" (product1), "r" (product2), "r" (lop_temp));
-                hash_.hash[rowId] = lop_temp;
-                #endif
+            // Step 3: Initialize result
+            uint32_t result[8];
+            #pragma unroll
+            for (int i = 0; i < 8; i++) {
+                result[i] = ((const uint32_t*)input_hash.hash)[i];
             }
-            memset(input, 0, 80);
-            memcpy(input, hash_.hash, 32);
-            blake3_hasher heavy_hasher;
-            blake3_hasher_init(&heavy_hasher);
-            blake3_hasher_update(&heavy_hasher, input, 32);
-            blake3_hasher_finalize(&heavy_hasher, hash_.hash, BLAKE3_KEY_LEN);
-            if (LT_U256(hash_, target)){
-                atomicCAS((unsigned long long int*) final_nonce, 0, (unsigned long long int) nonce);
+            uint8_t hash_bytes[32];
+            memcpy(hash_bytes, input_hash.hash, 32);
+
+            // Step 4 & 5: BLAKE3 loops with bit manipulations
+            for (uint64_t r = 0; r < rounds; r++) {
+                blake3_hasher hasher;
+                blake3_hasher_init(&hasher);
+                blake3_hasher_update(&hasher, hash_bytes, 32);
+                blake3_hasher_finalize(&hasher, hash_bytes, BLAKE3_OUT_LEN);
+                bit_manipulations(hash_bytes);
+            }
+            for (uint64_t r = 0; r < rounds; r++) {
+                blake3_hasher hasher;
+                blake3_hasher_init(&hasher);
+                blake3_hasher_update(&hasher, hash_bytes, 32);
+                blake3_hasher_finalize(&hasher, hash_bytes, BLAKE3_OUT_LEN);
+                bit_manipulations(hash_bytes);
+            }
+
+            // Step 6: Update result
+            #pragma unroll
+            for (int i = 0; i < 8; i++) {
+                result[i] = ((const uint32_t*)hash_bytes)[i];
+            }
+
+            // Step 7: Main MemHash loop
+            for (uint64_t round = 0; round < rounds; round++) {
+                #pragma unroll
+                for (int i = 0; i < 8; i++) {
+                    uint8_t state_input[20];
+                    memcpy(state_input, &result[i], 4);
+                    uint64_t round64 = round;
+                    memcpy(state_input + 4, &round64, 8);
+                    memcpy(state_input + 12, &nonce, 8);
+                    uint8_t state_bytes[32];
+                    blake3_hasher state_hasher;
+                    blake3_hasher_init(&state_hasher);
+                    blake3_hasher_update(&state_hasher, state_input, 20);
+                    blake3_hasher_finalize(&state_hasher, state_bytes, BLAKE3_OUT_LEN);
+
+                    uint8_t mixed_bytes[32];
+                    byte_mixing(state_bytes, (uint8_t*)result, mixed_bytes);
+                    uint32_t v = ((const uint32_t*)mixed_bytes)[0];
+                    v ^= result[i];
+
+                    uint32_t branch = (v & 0xFF) % 4;
+                    if (branch == 0) {
+                        v = v + result[(i + 1) % 8];
+                    } else if (branch == 1) {
+                        v = v - result[(i + 1) % 8];
+                    } else if (branch == 2) {
+                        v = (v << (result[(i + 1) % 8] & 0x1F)) | (v >> (32 - (result[(i + 1) % 8] & 0x1F)));
+                    } else {
+                        v ^= result[(i + 1) % 8];
+                    }
+
+                    uint8_t b[4];
+                    b[0] = (v >> 0) & 0xFF;
+                    b[1] = (v >> 8) & 0xFF;
+                    b[2] = (v >> 16) & 0xFF;
+                    b[3] = (v >> 24) & 0xFF;
+                    uint32_t idx_base = v % 64;
+                    #pragma unroll
+                    for (int j = 0; j < 4; j++) {
+                        b[j] = sbox[(idx_base + b[j]) % SBOX_SIZE];
+                    }
+                    v = ((uint32_t)b[0]) |
+                        ((uint32_t)b[1] << 8) |
+                        ((uint32_t)b[2] << 16) |
+                        ((uint32_t)b[3] << 24);
+
+                    result[i] = v;
+                }
+            }
+
+            // Step 8: Finalize
+            uint8_t* output = (uint8_t*)result;
+            bit_manipulations(output);
+
+            // Step 9: Apply VecnoHash
+            uint8_t final_output[32];
+            blake3_hasher vecno_hasher;
+            blake3_hasher_init(&vecno_hasher);
+            blake3_hasher_update(&vecno_hasher, output, 32);
+            blake3_hasher_finalize(&vecno_hasher, final_output, BLAKE3_OUT_LEN);
+
+            // Step 10: Check against target
+            uint256_t final_hash;
+            memcpy(final_hash.hash, final_output, 32);
+
+            if (LT_U256(final_hash, target)) {
+                atomicCAS((unsigned long long int*)final_nonce, 0, (unsigned long long int)nonce);
             }
         }
     }
-
 }

@@ -4,15 +4,13 @@ use crate::pow::BlockSeed::{FullBlock, PartialBlock};
 use crate::proto::vecnod_message::Payload;
 use crate::proto::rpc_client::RpcClient;
 use crate::proto::{
-    GetBlockTemplateRequestMessage, GetInfoRequestMessage, VecnodMessage, NotifyBlockAddedRequestMessage,
-    NotifyNewBlockTemplateRequestMessage,
+    GetBlockTemplateRequestMessage, GetInfoRequestMessage, VecnodMessage, NotifyNewBlockTemplateRequestMessage,
 };
 use crate::{miner::MinerManager, Error};
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use log::{error, info, warn};
-use rand::{thread_rng, RngCore};
-use semver::Version;
+use rand::{rng, RngCore};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, error::SendError, Sender};
@@ -23,8 +21,7 @@ use tokio_util::sync::{PollSendError, PollSender};
 use tonic::{transport::Channel as TonicChannel, Streaming};
 use std::sync::atomic::AtomicU64;
 
-static EXTRA_DATA: &str = concat!(env!("CARGO_PKG_VERSION"), "/", env!("PACKAGE_COMPILE_TIME"));
-static VERSION_UPDATE: &str = "0.0.1";
+static EXTRA_DATA: &str = concat!(env!("CARGO_PKG_VERSION"));
 type BlockHandle = JoinHandle<Result<(), PollSendError<VecnodMessage>>>;
 
 #[allow(dead_code)]
@@ -34,28 +31,19 @@ pub struct VecnodHandler {
     stream: Streaming<VecnodMessage>,
     miner_address: String,
     mine_when_not_synced: bool,
-    devfund_address: Option<String>,
-    devfund_percent: u16,
     block_template_ctr: Arc<AtomicU16>,
     block_channel: Sender<BlockSeed>,
     block_handle: BlockHandle,
-    // New field to track successful block submissions
     successful_blocks: Arc<AtomicU64>,
 }
 
 #[async_trait(?Send)]
 impl Client for VecnodHandler {
-    fn add_devfund(&mut self, address: String, percent: u16) {
-        self.devfund_address = Some(address);
-        self.devfund_percent = percent;
-    }
-
     async fn register(&mut self) -> Result<(), Error> {
         Ok(())
     }
 
     async fn listen(&mut self, miner: &mut MinerManager) -> Result<(), Error> {
-        // Start the periodic logger for successful block submissions
         let successful_blocks = Arc::clone(&self.successful_blocks);
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(10));
@@ -104,13 +92,11 @@ impl VecnodHandler {
             send_channel,
             miner_address,
             mine_when_not_synced,
-            devfund_address: None,
-            devfund_percent: 0,
             block_template_ctr: block_template_ctr
-                .unwrap_or_else(|| Arc::new(AtomicU16::new((thread_rng().next_u64() % 10_000u64) as u16))),
+                .unwrap_or_else(|| Arc::new(AtomicU16::new((rng().next_u64() % 10_000u64) as u16))),
             block_channel,
             block_handle,
-            successful_blocks: Arc::new(AtomicU64::new(0)), // Initialize the counter
+            successful_blocks: Arc::new(AtomicU64::new(0)),
         }))
     }
 
@@ -136,14 +122,11 @@ impl VecnodHandler {
     }
 
     async fn client_get_block_template(&mut self) -> Result<(), SendError<VecnodMessage>> {
-        let pay_address = match &self.devfund_address {
-            Some(devfund_address) if self.block_template_ctr.load(Ordering::SeqCst) <= self.devfund_percent => {
-                devfund_address.clone()
-            }
-            _ => self.miner_address.clone(),
-        };
         self.block_template_ctr.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| Some((v + 1) % 10_000)).unwrap();
-        self.client_send(GetBlockTemplateRequestMessage { pay_address, extra_data: EXTRA_DATA.into() }).await
+        self.client_send(GetBlockTemplateRequestMessage { 
+            pay_address: self.miner_address.clone(), 
+            extra_data: EXTRA_DATA.into() 
+        }).await
     }
 
     async fn handle_message(&mut self, msg: Payload, miner: &mut MinerManager) -> Result<(), Error> {
@@ -163,7 +146,6 @@ impl VecnodHandler {
             },
             Payload::SubmitBlockResponse(res) => match res.error {
                 None => {
-                    // Increment the successful block counter instead of logging
                     self.successful_blocks.fetch_add(1, Ordering::SeqCst);
                 }
                 Some(e) => warn!("Failed submitting block: {:?}", e),
@@ -176,13 +158,8 @@ impl VecnodHandler {
                 }
             }
             Payload::GetInfoResponse(info) => {
-                info!("Vecnod version: {}", info.server_version);
-                let vecno_version = Version::parse(&info.server_version)?;
-                let update_version = Version::parse(VERSION_UPDATE)?;
-                match vecno_version >= update_version {
-                    true => self.client_send(NotifyNewBlockTemplateRequestMessage {}).await?,
-                    false => self.client_send(NotifyBlockAddedRequestMessage {}).await?,
-                };
+                info!("VecnodMessage version: {}", info.server_version);
+                self.client_send(NotifyNewBlockTemplateRequestMessage {}).await?;
                 self.client_get_block_template().await?;
             }
             Payload::NotifyNewBlockTemplateResponse(res) => match res.error {

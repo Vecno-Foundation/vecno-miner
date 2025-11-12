@@ -4,11 +4,9 @@ extern crate vecno_miner;
 use clap::{ArgMatches, FromArgMatches};
 use cust::prelude::*;
 use vecno_miner::{Plugin, Worker, WorkerSpec};
-use log::LevelFilter;
 use std::error::Error as StdError;
 #[cfg(feature = "overclock")]
 use {
-    log::{error, info},
     nvml_wrapper::Device as NvmlDevice,
     nvml_wrapper::Nvml,
 };
@@ -21,7 +19,7 @@ mod worker;
 use crate::cli::{CudaOpt, NonceGenEnum};
 use crate::worker::CudaGPUWorker;
 
-const DEFAULT_WORKLOAD_SCALE: f32 = 1024.;
+const DEFAULT_WORKLOAD_SCALE: f32 = 128.0;
 
 pub struct CudaPlugin {
     specs: Vec<CudaWorkerSpec>,
@@ -33,7 +31,6 @@ pub struct CudaPlugin {
 impl CudaPlugin {
     fn new() -> Result<Self, Error> {
         cust::init(CudaFlags::empty())?;
-        env_logger::builder().filter_level(LevelFilter::Info).parse_default_env().init();
         Ok(Self {
             specs: Vec::new(),
             _enabled: false,
@@ -56,7 +53,6 @@ impl Plugin for CudaPlugin {
         self.specs.iter().map(|spec| Box::new(*spec) as Box<dyn WorkerSpec>).collect::<Vec<Box<dyn WorkerSpec>>>()
     }
 
-    //noinspection RsTypeCheck
     fn process_option(&mut self, matches: &ArgMatches) -> Result<usize, vecno_miner::Error> {
         let opts: CudaOpt = CudaOpt::from_arg_matches(matches)?;
 
@@ -70,7 +66,6 @@ impl Plugin for CudaPlugin {
                 }
             };
 
-            // if any of cuda_lock_core_clocks / cuda_lock_mem_clocks / cuda_power_limit is valid, init nvml and try to apply
             #[cfg(feature = "overclock")]
             if opts.overclock.cuda_lock_core_clocks.is_some()
                 || opts.overclock.cuda_lock_mem_clocks.is_some()
@@ -109,14 +104,14 @@ impl Plugin for CudaPlugin {
                             Err(e) => error!("set gpu locked clocks {:?}", e),
                             _ => info!("GPU #{} #{} lock core clock at {} Mhz", i, &nvml_device.name()?, &lcc),
                         };
-                    };
+                    }
 
                     if let Some(pl) = power_limit {
                         match nvml_device.set_power_management_limit(pl * 1000) {
                             Err(e) => error!("set power limit {:?}", e),
                             _ => info!("GPU #{} #{} power limit at {} W", i, &nvml_device.name()?, &pl),
                         };
-                    };
+                    }
                 }
             }
 
@@ -150,7 +145,7 @@ struct CudaWorkerSpec {
 impl WorkerSpec for CudaWorkerSpec {
     fn id(&self) -> String {
         let device = Device::get_device(self.device_id).unwrap();
-        format!("#{} ({})", self.device_id, device.name().unwrap())
+        format!("#{} {}", self.device_id, device.name().unwrap())
     }
 
     fn build(&self) -> Box<dyn Worker> {

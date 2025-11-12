@@ -18,6 +18,7 @@ impl VecnodMessage {
     pub fn notify_block_added() -> Self {
         VecnodMessage { payload: Some(Payload::NotifyBlockAddedRequest(NotifyBlockAddedRequestMessage {})) }
     }
+
     #[must_use]
     #[inline(always)]
     pub fn submit_block(block: RpcBlock) -> Self {
@@ -51,6 +52,7 @@ impl From<GetBlockTemplateRequestMessage> for VecnodMessage {
 }
 
 impl From<NotifyNewBlockTemplateRequestMessage> for VecnodMessage {
+    #[inline(always)]
     fn from(a: NotifyNewBlockTemplateRequestMessage) -> Self {
         VecnodMessage { payload: Some(Payload::NotifyNewBlockTemplateRequest(a)) }
     }

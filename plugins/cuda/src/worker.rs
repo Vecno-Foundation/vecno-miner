@@ -13,9 +13,11 @@ use std::sync::{Arc, Weak};
 
 static BPS: f32 = 1.;
 
-static PTX_86: &str = include_str!("../resources/vecno-cuda-sm86.ptx");
-static PTX_75: &str = include_str!("../resources/vecno-cuda-sm75.ptx");
 static PTX_61: &str = include_str!("../resources/vecno-cuda-sm61.ptx");
+static PTX_75: &str = include_str!("../resources/vecno-cuda-sm75.ptx");
+static PTX_86: &str = include_str!("../resources/vecno-cuda-sm86.ptx");
+static PTX_89: &str = include_str!("../resources/vecno-cuda-sm89.ptx");
+static PTX_90: &str = include_str!("../resources/vecno-cuda-sm90.ptx");
 
 pub struct Kernel<'kernel> {
     func: Arc<Function<'kernel>>,
@@ -27,7 +29,7 @@ impl<'kernel> Kernel<'kernel> {
     pub fn new(module: Weak<Module>, name: &'kernel str) -> Result<Kernel<'kernel>, Error> {
         let func = Arc::new(unsafe {
             module.as_ptr().as_ref().unwrap().get_function(name).map_err(|e| {
-                error!("Error loading function: {}", e);
+                error!("Error loading function '{}': {}", name, e);
                 e
             })?
         });
@@ -50,48 +52,56 @@ impl<'kernel> Kernel<'kernel> {
 }
 
 pub struct CudaGPUWorker<'gpu> {
-    // NOTE: The order is important! context must be closed last
-    heavy_hash_kernel: Kernel<'gpu>,
+    mem_hash_kernel: Kernel<'gpu>,
     stream: Stream,
     start_event: Event,
     stop_event: Event,
     _module: Arc<Module>,
-
     rand_state: DeviceBuffer<u64>,
     final_nonce_buff: DeviceBuffer<u64>,
-
     device_id: u32,
     pub workload: usize,
     _context: Context,
-
     random: NonceGenEnum,
+    current_seed: u64,
 }
 
 impl<'gpu> Worker for CudaGPUWorker<'gpu> {
     fn id(&self) -> String {
         let device = CurrentContext::get_device().unwrap();
-        format!("#{} ({})", self.device_id, device.name().unwrap())
+        format!("#{} {}", self.device_id, device.name().unwrap())
     }
 
-    fn load_block_constants(&mut self, hash_header: &[u8; 72], matrix: &[[u16; 64]; 64], target: &[u64; 4]) {
-        let u8matrix: Arc<[[u8; 64]; 64]> = Arc::new(matrix.map(|row| row.map(|v| v as u8)));
-        let mut hash_header_gpu = self._module.get_global::<[u8; 72]>(&CString::new("hash_header").unwrap()).unwrap();
-        hash_header_gpu.copy_from(hash_header).map_err(|e| e.to_string()).unwrap();
+    fn load_block_constants(&mut self, hash_header: &[u8; 72], target: &[u64; 4]) {
+        let mut hash_header_gpu = self._module.get_global::<[u8; 72]>(&CString::new("hash_header").unwrap())
+            .map_err(|e| {
+                error!("Failed to get global 'hash_header': {}", e);
+                Error::from(e.to_string())
+            }).unwrap();
+        hash_header_gpu.copy_from(hash_header).map_err(|e| {
+            error!("Failed to copy hash_header: {}", e);
+            Error::from(e.to_string())
+        }).unwrap();
 
-        let mut matrix_gpu = self._module.get_global::<[[u8; 64]; 64]>(&CString::new("matrix").unwrap()).unwrap();
-        matrix_gpu.copy_from(&u8matrix).map_err(|e| e.to_string()).unwrap();
-
-        let mut target_gpu = self._module.get_global::<[u64; 4]>(&CString::new("target").unwrap()).unwrap();
-        target_gpu.copy_from(target).map_err(|e| e.to_string()).unwrap();
+        let mut target_gpu = self._module.get_global::<[u64; 4]>(&CString::new("target").unwrap())
+            .map_err(|e| {
+                error!("Failed to get global 'target': {}", e);
+                Error::from(e.to_string())
+            }).unwrap();
+        target_gpu.copy_from(target).map_err(|e| {
+            error!("Failed to copy target: {}", e);
+            Error::from(e.to_string())
+        }).unwrap();
     }
 
     #[inline(always)]
-    fn calculate_hash(&mut self, _nonces: Option<&Vec<u64>>, nonce_mask: u64, nonce_fixed: u64) {
-        let func = &self.heavy_hash_kernel.func;
+    fn calculate_hash(&mut self, _nonces: Option<&Vec<u64>>, nonce_mask: u64, nonce_fixed: u64, timestamp: u64) {
+        let func = &self.mem_hash_kernel.func;
         let stream = &self.stream;
         let random: u8 = match self.random {
             NonceGenEnum::Lean => {
-                self.rand_state.copy_from(&[rand::thread_rng().next_u64()]).unwrap();
+                self.rand_state.copy_from(&[self.current_seed]).unwrap();
+                self.current_seed = self.current_seed.wrapping_add(self.workload as u64);
                 0
             }
             NonceGenEnum::Xoshiro => 1,
@@ -100,40 +110,37 @@ impl<'gpu> Worker for CudaGPUWorker<'gpu> {
         self.start_event.record(stream).unwrap();
         unsafe {
             launch!(
-                func<<<
-                    self.heavy_hash_kernel.grid_size, self.heavy_hash_kernel.block_size,
-                    0, stream
-                >>>(
-                    nonce_mask, nonce_fixed,
-                    self.workload,
+                func<<<self.mem_hash_kernel.grid_size, self.mem_hash_kernel.block_size, 0, stream>>>(
+                    nonce_mask,
+                    nonce_fixed,
+                    self.workload as u64,
                     random,
                     self.rand_state.as_device_ptr(),
-                    self.final_nonce_buff.as_device_ptr()
+                    self.final_nonce_buff.as_device_ptr(),
+                    timestamp
                 )
-            )
-            .unwrap(); // We see errors in sync
+            ).unwrap();
         }
         self.stop_event.record(stream).unwrap();
     }
 
     #[inline(always)]
     fn sync(&self) -> Result<(), Error> {
-        //self.stream.synchronize()?;
         self.stop_event.synchronize()?;
         if self.stop_event.elapsed_time_f32(&self.start_event)? > 1000. / BPS {
-            return Err("Cuda takes longer then block rate. Please reduce your workload.".into());
+            return Err("CUDA takes longer than block rate. Please reduce your workload.".into());
         }
         Ok(())
-    }
-
-    fn get_workload(&self) -> usize {
-        self.workload
     }
 
     #[inline(always)]
     fn copy_output_to(&mut self, nonces: &mut Vec<u64>) -> Result<(), Error> {
         self.final_nonce_buff.copy_to(nonces)?;
         Ok(())
+    }
+
+    fn get_workload(&self) -> usize {
+        self.workload
     }
 }
 
@@ -145,12 +152,12 @@ impl<'gpu> CudaGPUWorker<'gpu> {
         blocking_sync: bool,
         random: NonceGenEnum,
     ) -> Result<Self, Error> {
-        info!("Starting a CUDA worker");
+        info!("Starting a CUDA worker on device #{}", device_id);
         let sync_flag = match blocking_sync {
             true => ContextFlags::SCHED_BLOCKING_SYNC,
             false => ContextFlags::SCHED_AUTO,
         };
-        let device = Device::get_device(device_id).unwrap();
+        let device = Device::get_device(device_id)?;
         let _context = Context::new(device)?;
         _context.set_flags(sync_flag)?;
 
@@ -158,59 +165,42 @@ impl<'gpu> CudaGPUWorker<'gpu> {
         let minor = device.get_attribute(DeviceAttribute::ComputeCapabilityMinor)?;
         let _module: Arc<Module>;
         info!("Device #{} compute version is {}.{}", device_id, major, minor);
-        if major > 8 || (major == 8 && minor >= 6) {
-            _module = Arc::new(Module::from_ptx(PTX_86, &[ModuleJitOption::OptLevel(OptLevel::O4)]).map_err(|e| {
-                error!("Error loading PTX. Make sure you have the updated driver for you devices");
-                e
-            })?);
+        if major > 9 || (major == 9 && minor >= 0) {
+            _module = Arc::new(Module::from_ptx(PTX_90, &[ModuleJitOption::OptLevel(OptLevel::O4)])?);
+        } else if major > 8 || (major == 8 && minor >= 9) {
+            _module = Arc::new(Module::from_ptx(PTX_89, &[ModuleJitOption::OptLevel(OptLevel::O4)])?);
+        } else if major > 8 || (major == 8 && minor >= 6) {
+            _module = Arc::new(Module::from_ptx(PTX_86, &[ModuleJitOption::OptLevel(OptLevel::O4)])?);
         } else if major > 7 || (major == 7 && minor >= 5) {
-            _module = Arc::new(Module::from_ptx(PTX_75, &[ModuleJitOption::OptLevel(OptLevel::O4)]).map_err(|e| {
-                error!("Error loading PTX. Make sure you have the updated driver for you devices");
-                e
-            })?);
+            _module = Arc::new(Module::from_ptx(PTX_75, &[ModuleJitOption::OptLevel(OptLevel::O4)])?);
         } else if major > 6 || (major == 6 && minor >= 1) {
-            _module = Arc::new(Module::from_ptx(PTX_61, &[ModuleJitOption::OptLevel(OptLevel::O4)]).map_err(|e| {
-                error!("Error loading PTX. Make sure you have the updated driver for you devices");
-                e
-            })?);
-        }/* else if major >= 3 {
-            _module = Arc::new(Module::from_ptx(PTX_30, &[ModuleJitOption::OptLevel(OptLevel::O4)]).map_err(|e| {
-                error!("Error loading PTX. Make sure you have the updated driver for you devices");
-                e
-            })?);
-        } else if major >= 2 {
-            _module = Arc::new(Module::from_ptx(PTX_20, &[ModuleJitOption::OptLevel(OptLevel::O4)]).map_err(|e| {
-                error!("Error loading PTX. Make sure you have the updated driver for you devices");
-                e
-            })?);
-        }*/ else {
-            return Err("Cuda compute version not supported".into());
+            _module = Arc::new(Module::from_ptx(PTX_61, &[ModuleJitOption::OptLevel(OptLevel::O4)])?);
+        } else {
+            return Err("CUDA compute version not supported".into());
         }
 
         let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
-
-        let mut heavy_hash_kernel = Kernel::new(Arc::downgrade(&_module), "heavy_hash")?;
+        let mut mem_hash_kernel = Kernel::new(Arc::downgrade(&_module), "mem_hash")?;
 
         let mut chosen_workload = 0u32;
         if is_absolute {
             chosen_workload = 1;
         } else {
-            let cur_workload = heavy_hash_kernel.get_workload();
+            let cur_workload = mem_hash_kernel.get_workload();
             if chosen_workload == 0 || chosen_workload < cur_workload {
                 chosen_workload = cur_workload;
             }
         }
         chosen_workload = (chosen_workload as f32 * workload) as u32;
         info!("GPU #{} Chosen workload: {}", device_id, chosen_workload);
-        heavy_hash_kernel.set_workload(chosen_workload);
+        mem_hash_kernel.set_workload(chosen_workload);
 
         let final_nonce_buff = vec![0u64; 1].as_slice().as_dbuf()?;
 
-        let rand_state: DeviceBuffer<u64> = match random {
+        let (rand_state, current_seed) = match random {
             NonceGenEnum::Xoshiro => {
                 info!("Using xoshiro for nonce-generation");
-                let mut buffer = DeviceBuffer::<u64>::zeroed(4 * (chosen_workload as usize)).unwrap();
-                info!("GPU #{} is generating initial seed. This may take some time.", device_id);
+                let mut buffer = DeviceBuffer::<u64>::zeroed(4 * (chosen_workload as usize))?;
                 let mut seed = [1u64; 4];
                 seed.try_fill(&mut rand::thread_rng())?;
                 buffer.copy_from(
@@ -222,16 +212,17 @@ impl<'gpu> CudaGPUWorker<'gpu> {
                         .as_slice(),
                 )?;
                 info!("GPU #{} initialized", device_id);
-                buffer
+                (buffer, 0)
             }
             NonceGenEnum::Lean => {
                 info!("Using lean nonce-generation");
-                let mut buffer = DeviceBuffer::<u64>::zeroed(1).unwrap();
+                let mut buffer = DeviceBuffer::<u64>::zeroed(1)?;
                 let seed = rand::thread_rng().next_u64();
                 buffer.copy_from(&[seed])?;
-                buffer
+                (buffer, seed)
             }
         };
+
         Ok(Self {
             device_id,
             _context,
@@ -242,8 +233,9 @@ impl<'gpu> CudaGPUWorker<'gpu> {
             stream,
             rand_state,
             final_nonce_buff,
-            heavy_hash_kernel,
+            mem_hash_kernel,
             random,
+            current_seed,
         })
     }
 }

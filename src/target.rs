@@ -32,6 +32,12 @@ impl Uint256 {
     pub fn new(v: [u64; 4]) -> Self {
         Self(v)
     }
+
+    #[inline(always)]
+    pub fn as_bytes(&self) -> [u8; 32] {
+        self.to_le_bytes()
+    }
+
     /// Create an object from a given unsigned 64-bit integer
     #[inline]
     pub fn from_u64(init: u64) -> Uint256 {
@@ -40,6 +46,20 @@ impl Uint256 {
         Uint256(ret)
     }
 
+
+    /// Returns the number of significant bits in the Uint256
+    /// Counts the number of bits from the most significant non-zero bit.
+    #[inline]
+    pub fn bits(&self) -> u32 {
+        let mut bits = 0;
+        for (i, &word) in self.0.iter().enumerate().rev() {
+            if word != 0 {
+                bits = (i as u32 * 64) + (64 - word.leading_zeros());
+                break;
+            }
+        }
+        bits
+    }
     /// Creates big integer value from a byte slice using
     /// little-endian encoding
     #[inline(always)]

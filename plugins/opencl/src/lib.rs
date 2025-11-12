@@ -3,7 +3,7 @@ extern crate vecno_miner;
 
 use clap::{ArgMatches, FromArgMatches};
 use vecno_miner::{Plugin, Worker, WorkerSpec};
-use log::{info, LevelFilter};
+use log::info;
 use opencl3::device::{Device, CL_DEVICE_TYPE_ALL};
 use opencl3::platform::{get_platforms, Platform};
 use opencl3::types::cl_device_id;
@@ -17,7 +17,7 @@ mod worker;
 use crate::cli::{NonceGenEnum, OpenCLOpt};
 use crate::worker::OpenCLGPUWorker;
 
-const DEFAULT_WORKLOAD_SCALE: f32 = 512.;
+const DEFAULT_WORKLOAD_SCALE: f32 = 128.;
 
 pub struct OpenCLPlugin {
     specs: Vec<OpenCLWorkerSpec>,
@@ -26,7 +26,6 @@ pub struct OpenCLPlugin {
 
 impl OpenCLPlugin {
     fn new() -> Result<Self, Error> {
-        env_logger::builder().filter_level(LevelFilter::Info).parse_default_env().init();
         Ok(Self { specs: Vec::new(), _enabled: false })
     }
 }
@@ -44,11 +43,9 @@ impl Plugin for OpenCLPlugin {
         self.specs.iter().map(|spec| Box::new(*spec) as Box<dyn WorkerSpec>).collect::<Vec<Box<dyn WorkerSpec>>>()
     }
 
-    //noinspection RsTypeCheck
     fn process_option(&mut self, matches: &ArgMatches) -> Result<usize, vecno_miner::Error> {
         let opts: OpenCLOpt = OpenCLOpt::from_arg_matches(matches)?;
 
-        self._enabled = opts.opencl_enable;
         let platforms = match get_platforms() {
             Ok(p) => p,
             Err(e) => {
@@ -108,7 +105,6 @@ impl Plugin for OpenCLPlugin {
                         _ => DEFAULT_WORKLOAD_SCALE,
                     },
                     is_absolute: opts.opencl_workload_absolute,
-                    experimental_amd: opts.experimental_amd,
                     use_amd_binary: !opts.opencl_no_amd_binary,
                     random: opts.opencl_nonce_gen,
                 })
@@ -125,7 +121,6 @@ struct OpenCLWorkerSpec {
     device_id: Device,
     workload: f32,
     is_absolute: bool,
-    experimental_amd: bool,
     use_amd_binary: bool,
     random: NonceGenEnum,
 }
@@ -147,7 +142,6 @@ impl WorkerSpec for OpenCLWorkerSpec {
                 self.device_id,
                 self.workload,
                 self.is_absolute,
-                self.experimental_amd,
                 self.use_amd_binary,
                 &self.random,
             )

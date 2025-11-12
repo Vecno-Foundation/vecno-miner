@@ -215,7 +215,7 @@ mod sync {
         }
 
         #[inline(always)]
-        pub fn lock(&self) -> MutexGuard<T> {
+        pub fn lock(&self) -> MutexGuard<'_, T> {
             #[cfg(not(feature = "parking_lot"))]
             return self.0.lock().unwrap_or_else(|e| e.into_inner());
             #[cfg(feature = "parking_lot")]
@@ -255,7 +255,7 @@ mod sync {
         }
 
         #[inline(always)]
-        pub fn read(&self) -> RwLockReadGuard<T> {
+        pub fn read(&self) -> RwLockReadGuard<'_, T> {
             #[cfg(not(feature = "parking_lot"))]
             return self.0.read().unwrap_or_else(|e| e.into_inner());
             #[cfg(feature = "parking_lot")]
@@ -263,7 +263,7 @@ mod sync {
         }
 
         #[inline(always)]
-        pub fn write(&self) -> RwLockWriteGuard<T> {
+        pub fn write(&self) -> RwLockWriteGuard<'_, T> {
             #[cfg(not(feature = "parking_lot"))]
             return self.0.write().unwrap_or_else(|e| e.into_inner());
             #[cfg(feature = "parking_lot")]

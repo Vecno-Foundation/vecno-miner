@@ -34,7 +34,7 @@ To remove a plugin, you simply remove the corresponding `dll`/`so` for the direc
 
 # Usage
 
-To start mining, you need to run [vecno](https://github.com/Vecno-Foundation/vecnod) and have an address to send the rewards to.
+To start mining, you need to run [vecno](https://github.com/Vecno-Foundation/vecnod) or mine using a startum pool. You need have an address to send the rewards to.
 
 Help:
 
@@ -46,56 +46,65 @@ USAGE:
     vecno-miner [OPTIONS] --mining-address <MINING_ADDRESS>
 
 OPTIONS:
-    -a, --mining-address <MINING_ADDRESS>                  The Vecno address for the miner reward
+    -a, --mining-address <MINING_ADDRESS>                  The Vecno address for the miner reward [vecno:xxxx]
         --cuda-device <CUDA_DEVICE>                        Which CUDA GPUs to use [default: all]
         --cuda-disable                                     Disable cuda workers
         --cuda-lock-core-clocks <CUDA_LOCK_CORE_CLOCKS>    Lock core clocks eg: ,1200, [default: 0]
         --cuda-lock-mem-clocks <CUDA_LOCK_MEM_CLOCKS>      Lock mem clocks eg: ,810, [default: 0]
         --cuda-no-blocking-sync                            Actively wait for result. Higher CPU usage, but less red blocks. Can have lower workload.
         --cuda-power-limits <CUDA_POWER_LIMITS>            Lock power limits eg: ,150, [default: 0]
-        --cuda-workload <CUDA_WORKLOAD>                    Ratio of nonces to GPU possible parrallel run [default: 64]
+        --cuda-workload <CUDA_WORKLOAD>                    Ratio of nonces to GPU possible parrallel run [default: 128]
         --cuda-workload-absolute                           The values given by workload are not ratio, but absolute number of nonces [default: false]
 	--cuda-nonce-gen <NONCE_GEN>                       The random method used to generate nonces. Options: (i) xoshiro (ii) lean [default: lean]
     -d, --debug                                            Enable debug logging level
-        --experimental-amd                                 Uses SMID instructions in AMD. Miner will crash if instruction is not supported
     -h, --help                                             Print help information
         --mine-when-not-synced                             Mine even when vecno says it is not synced
         --opencl-nonce-gen <NONCE_GEN>                     The random method used to generate nonces. Options: (i) xoshiro (ii) lean [default: lean]
         --opencl-amd-disable                               Disables AMD mining (does not override opencl-enable)
         --opencl-device <OPENCL_DEVICE>                    Which OpenCL GPUs to use on a specific platform
-        --opencl-enable                                    Enable opencl, and take all devices of the chosen platform
         --opencl-no-amd-binary                             Disable fetching of precompiled AMD kernel (if exists)
         --opencl-platform <OPENCL_PLATFORM>                Which OpenCL platform to use (limited to one per executable)
-        --opencl-workload <OPENCL_WORKLOAD>                Ratio of nonces to GPU possible parrallel run in OpenCL [default: 512]
+        --opencl-workload <OPENCL_WORKLOAD>                Ratio of nonces to GPU possible parrallel run in OpenCL [default: 128]
         --opencl-workload-absolute                         The values given by workload are not ratio, but absolute number of nonces in OpenCL [default: false]
-    -p, --port <PORT>                                      Vecnod port [default: Mainnet = 7110, Testnet = 7210]
-    -s, --vecno-address <vecno_ADDRESS>                  The IP of the vecno instance [default: 127.0.0.1]
+    -p, --port <PORT>                                      Vecnod port [default: Mainnet = 7110]
+    -s, --vecno-address <VECNO_ADDRESS>                    The IP of the vecno instance [default: 127.0.0.1]
     -t, --threads <NUM_THREADS>                            Amount of CPU miner threads to launch [default: 0]
-        --testnet                                          Use testnet instead of mainnet [default: false]
+
+STRATUM POOL:
+	--stratum-server <STRATUM_ADDRESS>		   The Stratum address for mining [default: pool.vecnoscan.org]
+	--stratum-port <STRATUM_PORT>                      Stratum port [default: 6969]
+	--stratum-worker <WORKER_NAME>                     Worker name 
+	--stratum-password <WORKER_PASSWORD>               Worker password [optional]
+
 ```
 
-To start mining, you just need to run the following:
 
-`./vecno-miner --mining-address vecno:XXXXX --port 7110`
+
+# Solo mining
+
+To start SOLO mining , you just need to run the following:
+
+```
+./vecno-miner --vecno-address <VECNO_ADDRESS> --mining-address <MINING_ADDRESS>
+```
 
 This will run the miner on all the available GPU devcies.
 
 Optional: use arg `--threads ` to activate CPU mining. This uses all available CPU threads.
 
+Solo mining requires you ruinning your own node.
+
+
+# Mining Pool
+
+```
+./vecno-miner --mining-address <MINING_ADDRESS> --stratum-server <STRATUM_ADDRESS> --stratum-port <STRATUM_PORT> --stratum-worker <WORKER_NAME> --stratum-password <WORKER_PASSWORD>
+```
+
+Running this will activate all available GPU devcies.
+
+Optional: use arg `--threads ` to activate CPU mining. This uses all available CPU threads.
+
 ## Support
 
-This mining software is still experimental, it has not been tested with mining pools, only with solo mining.
-
-It's currently have been tested with:
-
-AMD:
-
-> AMD Radeon RX 7700 XT
-
-NVIDIA:
-
-> NVIDIA GeForce GTX 1070
-
-CPU:
-
-> Intel® Core™ i9-12900KF
+This mining software is experimental, testnet mining is disabled. Use [vecno-cpu-miner](https://github.com/Vecno-Foundation/vecno-cpu-miner) if you want to need to mine on testnet.
