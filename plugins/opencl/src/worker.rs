@@ -13,7 +13,7 @@ use opencl3::memory::{Buffer, ClMem, CL_MAP_WRITE, CL_MEM_READ_ONLY, CL_MEM_READ
 use opencl3::platform::Platform;
 use opencl3::program::{Program, CL_FINITE_MATH_ONLY, CL_MAD_ENABLE, CL_STD_2_0};
 use opencl3::types::{cl_event, cl_uchar, cl_ulong, CL_BLOCKING};
-use rand::{thread_rng, Fill, RngCore};
+use rand::{rng, Fill, RngCore};
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::Arc;
@@ -68,7 +68,7 @@ impl Worker for OpenCLGPUWorker {
 
     fn calculate_hash(&mut self, _nonces: Option<&Vec<u64>>, nonce_mask: u64, nonce_fixed: u64, timestamp: u64) {
         if self.random == NonceGenEnum::Lean {
-            let seed = [thread_rng().next_u64(), 0, 0, 0];
+            let seed = [rng().next_u64(), 0, 0, 0];
             unsafe {
                 self.queue
                     .enqueue_write_buffer(&mut self.random_state, CL_BLOCKING, 0, &[seed], &[])
@@ -223,7 +223,7 @@ impl OpenCLGPUWorker {
                 .expect("Buffer allocation failed")
         };
         let mut seed = [1u64; 4];
-        seed.try_fill(&mut rand::thread_rng())?;
+        seed.fill(&mut rand::rng());
 
         let random_state = match random {
             NonceGenEnum::Xoshiro => {
@@ -273,7 +273,7 @@ impl OpenCLGPUWorker {
                     Buffer::<[cl_ulong; 4]>::create(context_ref, CL_MEM_READ_WRITE, 1, ptr::null_mut())
                         .expect("Buffer allocation failed")
                 };
-                let seed = [thread_rng().next_u64(), 0, 0, 0];
+                let seed = [rng().next_u64(), 0, 0, 0];
                 unsafe {
                     queue
                         .enqueue_write_buffer(&mut random_state, CL_BLOCKING, 0, &[seed], &[])

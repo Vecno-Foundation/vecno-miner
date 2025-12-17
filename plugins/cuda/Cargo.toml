@@ -9,10 +9,10 @@ edition = "2021"
 vecno-miner = {path = "../../"}
 cust ="0.3.2"
 log = "0.4"
-rand = "0.8"
+rand = "0.9.2"
 blake3 = "1.8.2"
-clap = { version = "3.0", features = ["color", "derive"]}
-env_logger = "0.9"
+clap = { version = "3.2.25", features = ["color", "derive"]}
+env_logger = "0.11.8"
 nvml-wrapper = { git = "https://github.com/benrod3k/nvml-wrapper", branch = "495.29.05", optional = true }
 hex = "0.4.3"
 dialoguer = "0.12.0"

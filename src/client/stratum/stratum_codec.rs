@@ -53,7 +53,7 @@ pub enum MiningSubmit {
 #[serde(untagged)]
 pub enum SetExtranonce {
     SetExtranoncePlain((String, u32)),
-    SetExtranoncePlainEth((String,)),
+    SetExtranoncePlainEth(String),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

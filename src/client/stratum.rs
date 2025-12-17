@@ -476,7 +476,7 @@ impl StratumHandler {
                     info!("Set extranonce: {} with size {} for {}", extranonce, nonce_size, self.worker);
                     self.set_extranonce(&extranonce, &nonce_size)
                 }
-                StratumCommand::SetExtranonce(SetExtranonce::SetExtranoncePlainEth((extranonce,))) => {
+                StratumCommand::SetExtranonce(SetExtranonce::SetExtranoncePlainEth(extranonce)) => {
                     let nonce_size = extranonce.len() as u32 / 2;
                     info!("Set extranonce (Eth): {} with size {} for {}", extranonce, nonce_size, self.worker);
                     self.set_extranonce(&extranonce, &nonce_size)

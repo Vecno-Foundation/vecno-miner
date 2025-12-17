@@ -13,7 +13,7 @@ use rand::Rng;
 use tokio::sync::mpsc::Sender;
 use tokio::task::{self, JoinHandle};
 use tokio::time::MissedTickBehavior;
-use sysinfo::{System, SystemExt, CpuExt};
+use sysinfo::{System};
 
 use vecno_miner::{PluginManager, WorkerSpec};
 
