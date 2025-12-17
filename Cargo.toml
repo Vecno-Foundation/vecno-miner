@@ -46,7 +46,7 @@ futures = "0.3.21"
 bytes = "1.1.0"
 async-trait = "0.1"
 num = "0.4"
-nix = "0.30.1"
+nix = { version = "0.30.1", features = ["signal", "pthread"] }
 hex = "0.4"
 semver = "1.0"
 time = { version = "0.3", features = ["formatting", "macros"] }
