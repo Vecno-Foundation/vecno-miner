@@ -20,6 +20,40 @@ typedef union _uint256_t {
 __constant__ uint8_t hash_header[HASH_HEADER_SIZE];
 __constant__ uint256_t target;
 
+__device__ __forceinline__ void blake3_simple_hash(const uint8_t* input, int len, uint8_t* output) {
+    uint32_t state[16];
+    uint32_t block_words[16];
+
+    #pragma unroll
+    for(int i=0; i<16; i++) block_words[i] = 0;
+
+    // Copy input (len is small, 20 or 32)
+    // Using memcpy which should be optimized
+    memcpy(block_words, input, len);
+
+    // Initialize state with IV and flags
+    state[0] = IV[0]; state[1] = IV[1]; state[2] = IV[2]; state[3] = IV[3];
+    state[4] = IV[4]; state[5] = IV[5]; state[6] = IV[6]; state[7] = IV[7];
+    state[8] = IV[0]; state[9] = IV[1]; state[10] = IV[2]; state[11] = IV[3];
+    state[12] = 0; // counter_low
+    state[13] = 0; // counter_high
+    state[14] = (uint32_t)len;
+    state[15] = CHUNK_START | CHUNK_END | ROOT;
+
+    round_fn(state, block_words, 0);
+    round_fn(state, block_words, 1);
+    round_fn(state, block_words, 2);
+    round_fn(state, block_words, 3);
+    round_fn(state, block_words, 4);
+    round_fn(state, block_words, 5);
+    round_fn(state, block_words, 6);
+
+    #pragma unroll
+    for(int i=0; i<8; i++) {
+        store32(output + i*4, state[i] ^ state[i+8]);
+    }
+}
+
 __device__ __inline__ void bit_manipulations(uint8_t* data) {
     uint32_t* d = (uint32_t*)data;
     #pragma unroll
@@ -55,9 +89,7 @@ __device__ __inline__ void generate_sbox(const uint8_t* input_bytes, uint8_t* sb
     for (int i = 0; i < 64; i += 2) {
         sbox[i] = seed[0];
         sbox[i + 1] = seed[1];
-        blake3_hasher_init(&hasher);
-        blake3_hasher_update(&hasher, seed, 32);
-        blake3_hasher_finalize(&hasher, seed, BLAKE3_OUT_LEN);
+        blake3_simple_hash(seed, 32, seed);
     }
 }
 
@@ -148,10 +180,7 @@ extern "C" {
                     memcpy(state_input + 4, &round64, 8);
                     memcpy(state_input + 12, &nonce, 8);
                     uint8_t state_bytes[32];
-                    blake3_hasher state_hasher;
-                    blake3_hasher_init(&state_hasher);
-                    blake3_hasher_update(&state_hasher, state_input, 20);
-                    blake3_hasher_finalize(&state_hasher, state_bytes, BLAKE3_OUT_LEN);
+                    blake3_simple_hash(state_input, 20, state_bytes);
 
                     uint8_t mixed_bytes[32];
                     byte_mixing(state_bytes, (uint8_t*)result, mixed_bytes);
