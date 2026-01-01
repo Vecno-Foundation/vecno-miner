@@ -64,8 +64,8 @@ pub fn interactive_config(term: &Term, plugins: &[String]) -> Result<Opt, Box<dy
             // Stratum Pool Configuration
             term.write_line("Configuring Stratum pool connection...\n")?;
             opt.stratum_server = Some(Input::with_theme(&theme)
-                .with_prompt("Enter stratum pool server address (e.g., pool.vecnoscan.org)")
-                .default("pool.vecnoscan.org".to_string())
+                .with_prompt("Enter stratum pool server address (e.g., vecnopool.com or vecnopool.de)")
+                .default("vecnopool.de".to_string())
                 .validate_with(|input: &String| -> Result<(), &str> {
                     if !input.is_empty() {
                         Ok(())
