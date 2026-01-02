@@ -45,15 +45,13 @@ echo Compiling for RTX 40xx (Ada Lovelace) - sm_89
 nvcc plugins\cuda\vecno-cuda-native\src\vecno-cuda.cu %COMMON_FLAGS% --ptx --gpu-architecture=compute_89 --gpu-code=sm_89 -o plugins\cuda\resources\vecno-cuda-sm89.ptx
 if !ERRORLEVEL! NEQ 0 echo ERROR: sm_89 failed && pause && exit /b !ERRORLEVEL!
 
-echo Compiling for RTX 50xx (Blackwell)    - sm_90  [Requires CUDA 12.4+]
+echo Compiling for RTX (Hopper) - sm_90
 nvcc plugins\cuda\vecno-cuda-native\src\vecno-cuda.cu %COMMON_FLAGS% --ptx --gpu-architecture=compute_90 --gpu-code=sm_90 -o plugins\cuda\resources\vecno-cuda-sm90.ptx
-set SM90_ERROR=!ERRORLEVEL!
-if !SM90_ERROR! NEQ 0 (
-    echo WARNING: sm_90 (Blackwell) failed — this is OK if you don't have CUDA 12.4+ or newer installed.
-    echo          RTX 50-series support will be disabled.
-) else (
-    echo SUCCESS: Blackwell (sm_90) compiled!
-)
+if !ERRORLEVEL! NEQ 0 echo ERROR: sm_90 failed && pause && exit /b !ERRORLEVEL!
+
+echo Compiling for RTX 50xx (Blackwell) - sm_120
+nvcc plugins\cuda\vecno-cuda-native\src\vecno-cuda.cu %COMMON_FLAGS% --ptx --gpu-architecture=compute_120 --gpu-code=sm_120 -o plugins\cuda\resources\vecno-cuda-sm120.ptx
+if !ERRORLEVEL! NEQ 0 echo ERROR: sm_120 failed && pause && exit /b !ERRORLEVEL!
 
 echo.
 echo ====================================================
@@ -64,7 +62,8 @@ echo    - GTX 10xx series         (sm_61)
 echo    - GTX 16xx / RTX 20xx     (sm_75)
 echo    - RTX 30xx series         (sm_80/sm_86)
 echo    - RTX 40xx series         (sm_89)
-echo    - RTX 50xx series         (sm_90)  [if CUDA 12.4+ installed]
+echo    - RTX Hopper series       (sm_90)
+echo    - RTX 50xx series         (sm_120)  [if CUDA 12.4+ installed]
 echo.
 echo  Tip: For best results, use the latest NVIDIA driver and CUDA Toolkit.
 echo ====================================================
