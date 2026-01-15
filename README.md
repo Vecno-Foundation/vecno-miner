@@ -71,8 +71,8 @@ OPTIONS:
     -t, --threads <NUM_THREADS>                            Amount of CPU miner threads to launch [default: 0]
 
 STRATUM POOL:
-	--stratum-server <STRATUM_ADDRESS>		   The Stratum address for mining [default: pool.vecnoscan.org]
-	--stratum-port <STRATUM_PORT>                      Stratum port [default: 6969]
+	--stratum-server <STRATUM_ADDRESS>		   The Stratum address for mining
+	--stratum-port <STRATUM_PORT>                      Stratum port
 	--stratum-worker <WORKER_NAME>                     Worker name 
 	--stratum-password <WORKER_PASSWORD>               Worker password [optional]
 
